@@ -1,5 +1,11 @@
 # TradeHack — stock day-trading scanner & paper autotrader
 
+[![smoke](https://github.com/ParamvirSingh96/Day-Trading/actions/workflows/smoke.yml/badge.svg)](https://github.com/ParamvirSingh96/Day-Trading/actions/workflows/smoke.yml)
+![Python 3.14](https://img.shields.io/badge/python-3.14-blue)
+![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)
+![Alpaca paper](https://img.shields.io/badge/broker-Alpaca%20paper-ffc107)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 TradeHack scans a watchlist of US stocks on 1-minute bars for a fixed playbook of
 intraday setups, confirms them, sizes a position against a risk budget, places the
 order on an **Alpaca paper account**, manages the exit in software, and records
@@ -177,3 +183,7 @@ done
 
 This software is for research and paper trading. Nothing here is investment
 advice, and trading real money with it is neither supported nor recommended.
+
+## License
+
+[MIT](LICENSE).

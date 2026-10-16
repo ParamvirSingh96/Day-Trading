@@ -1,0 +1,38 @@
+name: smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    name: Import check + smoke suites
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: Backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Import the application
+        run: python -c "import app.main; print('routes:', len(app.main.app.routes))"
+
+      - name: Smoke suites
+        run: |
+          set -euo pipefail
+          for s in smoke_close_lifecycle smoke_close_recovery smoke_entry_guards \
+                   smoke_haiku_gate smoke_ict_v7_playbook smoke_position_cap smoke_rth_split; do
+            echo "::group::$s"
+            python -m scripts.$s
+            echo "::endgroup::"
+          done
