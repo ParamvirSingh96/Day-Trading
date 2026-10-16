@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TradeHack Registration Complete</title>
+    <link rel="stylesheet" href="./styles.css?v=3" />
+  </head>
+  <body>
+    <div class="background-grid"></div>
+    <main class="auth-shell">
+      <section class="auth-panel panel">
+        <a class="back-link" href="./index.html">← Back to home</a>
+        <p class="eyebrow">Account Created</p>
+        <h1 class="auth-title">Thanks for registering.</h1>
+        <p class="intro">
+          Your account was created successfully. Try logging in below to enter your private TradeHack workspace.
+        </p>
+
+        <form id="login-form" class="auth-form">
+          <label>
+            <span>Email</span>
+            <input id="email" type="email" autocomplete="email" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit" id="login-submit">Login</button>
+        </form>
+
+        <p id="auth-status" class="auth-status muted-copy">Enter the email and password you just registered with.</p>
+      </section>
+      <section class="auth-side panel">
+        <p class="eyebrow">Next step</p>
+        <h2>Sign in to open your workspace.</h2>
+        <div class="auth-feature-list">
+          <div class="auth-feature">
+            <span>Private access</span>
+            <strong>Your tools stay inside your account workspace</strong>
+          </div>
+          <div class="auth-feature">
+            <span>Market tools</span>
+            <strong>Scanner and backtester are available after login</strong>
+          </div>
+          <div class="auth-feature">
+            <span>Secure flow</span>
+            <strong>Use the same email and password you just created</strong>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="./auth.js" type="module"></script>
+  </body>
+</html>

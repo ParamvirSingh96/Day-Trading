@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TradeHack Register</title>
+    <link rel="stylesheet" href="./styles.css?v=3" />
+  </head>
+  <body>
+    <div class="background-grid"></div>
+    <main class="auth-shell">
+      <section class="auth-panel panel">
+        <a class="back-link" href="./index.html">← Back to home</a>
+        <p class="eyebrow">Create Account</p>
+        <h1 class="auth-title">Register your research account</h1>
+        <p class="intro">
+          Create an account to unlock your private TradeHack workspace.
+        </p>
+
+        <form id="register-form" class="auth-form">
+          <label>
+            <span>Name</span>
+            <input id="name" type="text" autocomplete="name" required />
+          </label>
+          <label>
+            <span>Email</span>
+            <input id="email" type="email" autocomplete="email" required />
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="password" type="password" autocomplete="new-password" required />
+          </label>
+          <label>
+            <span>Confirm password</span>
+            <input id="confirm_password" type="password" autocomplete="new-password" required />
+          </label>
+          <button type="submit" id="register-submit">Create account</button>
+        </form>
+
+        <p id="auth-status" class="auth-status muted-copy">Passwords are stored locally for this project using hashed values.</p>
+        <p class="muted-copy">Already registered? <a class="inline-link" href="./login.html">Login here</a>.</p>
+      </section>
+      <section class="auth-side panel">
+        <p class="eyebrow">Why start here</p>
+        <h2>Open your account and enter the platform.</h2>
+        <div class="auth-feature-list">
+          <div class="auth-feature">
+            <span>Organized inputs</span>
+            <strong>Clean watchlist and setup workflow</strong>
+          </div>
+          <div class="auth-feature">
+            <span>Honest testing</span>
+            <strong>Replay with friction before paper trading</strong>
+          </div>
+          <div class="auth-feature">
+            <span>Growth path</span>
+            <strong>Designed for alerts and paper execution later</strong>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="./auth.js" type="module"></script>
+  </body>
+</html>

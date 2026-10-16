@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TradeHack Workspace</title>
+    <link rel="stylesheet" href="./styles.css?v=11" />
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  </head>
+  <body class="app-body">
+    <div class="background-grid"></div>
+    <main class="app-shell">
+      <header class="workspace-topbar panel">
+        <div class="brand-wrap">
+          <div class="brand-mark">TL</div>
+          <div>
+            <p class="eyebrow">TradeHack Workspace</p>
+            <h1 class="brand-title">Market Tools</h1>
+          </div>
+        </div>
+        <nav class="workspace-nav">
+          <a href="./app.html" class="nav-link nav-link-active">Market Tools</a>
+          <a href="./dashboard.html" class="nav-link">Dashboard</a>
+        </nav>
+        <div class="workspace-user">
+          <div>
+            <strong id="session-user-name">Guest</strong>
+            <p id="session-user-email" class="muted-copy">Login required</p>
+          </div>
+          <button type="button" class="ghost-button" id="logout-btn">Logout</button>
+        </div>
+      </header>
+
+      <!-- Morning Readiness Guard (v7.16, 2026-05-07) — banner sits above
+           Today's Dynamic Stocks. Hidden when state is "ok"; otherwise
+           shows a tier-colored bar with message + CTA + dismiss. Frontend
+           heartbeat owns the "Backend unavailable" red state independently
+           of the backend response (so it works even when uvicorn is hung). -->
+      <div id="readiness-banner" class="readiness-banner readiness-banner-hidden" role="status" aria-live="polite">
+        <span id="readiness-banner-icon" class="readiness-banner-icon">●</span>
+        <span id="readiness-banner-text" class="readiness-banner-text"></span>
+        <span id="readiness-banner-actions" class="readiness-banner-actions"></span>
+        <button id="readiness-banner-dismiss" class="readiness-banner-dismiss" type="button" title="Dismiss this banner for the rest of the day">×</button>
+      </div>
+
+      <!-- v7.16.x (2026-05-21): Approval-needed banner. Shows ONLY in
+           manual mode (autonomous OFF) when a matched setup is waiting
+           for the operator's approval. Driven off the autotrade status'
+           pending_approvals list — auto-hides when the card is approved,
+           rejected, or expires. Reuses the readiness-banner layout. -->
+      <div id="approval-banner" class="readiness-banner approval-banner readiness-banner-hidden" role="alert" aria-live="assertive">
+        <span class="readiness-banner-icon">⚡</span>
+        <span id="approval-banner-text" class="readiness-banner-text"></span>
+      </div>
+
+      <!-- Staleness banner (2026-05-28): nudges the operator to reload
+           the tab after 24h+ of uptime. Long-running JS apps with live
+           charts + WebSockets can leak memory and crash the browser's
+           content process (observed on Firefox). Logic in staleness.js. -->
+      <div id="staleness-banner" class="readiness-banner readiness-banner-hidden" role="status" aria-live="polite">
+        <span class="readiness-banner-icon">⟳</span>
+        <span id="staleness-banner-text" class="readiness-banner-text"></span>
+        <span class="readiness-banner-actions">
+          <button id="staleness-banner-reload" class="readiness-banner-cta" type="button">Reload now</button>
+        </span>
+        <button id="staleness-banner-dismiss" class="readiness-banner-dismiss" type="button" title="Dismiss for this session">×</button>
+      </div>
+
+      <!-- v7.16.2 (2026-05-08): two-column dashboard top.
+           Left column = Morning Scanner + Live Market (vertical stack).
+           Right column = sidebar with Auto-Trade controls + wallet summary
+           (moved up from the bottom wallet-panel so the most-acted-on
+           controls are above the fold). Setup Watch + remaining wallet
+           sections stay full-width below this grid. -->
+      <div class="dashboard-top-grid">
+        <div class="dashboard-top-left">
+
+      <!-- Morning Universe Chart Strip (v7.13 Phase 2.2, 2026-05-01)
+           Top-of-page placement, horizontal strip — mirrors the
+           Market Pulse pattern. Build + Refresh actions live in the
+           header-right slot so the operator never has to scroll to
+           run the screener. Cards scroll sideways within the strip;
+           click a card to open the full-size chart-modal with ICT
+           overlays. The section stays visible from build-time so
+           the operator can watch progress (status line below the
+           header turns from "no snapshot today" → "building… 14s"
+           → "23 base + 10 dynamic"). -->
+      <section class="panel morning-charts-section" id="morning-charts-section">
+        <div class="morning-charts-header">
+          <div class="morning-charts-title-row">
+            <div>
+              <p class="eyebrow">Morning Scanner</p>
+              <h2 style="margin:0;">Today's Dynamic Stocks</h2>
+            </div>
+            <div class="morning-charts-header-right">
+              <!-- Applied-state badge (v7.15.1, 2026-05-05) — replaces the
+                   bigger morning-applied-banner that lived in the now-removed
+                   Morning Universe panel. Compact: dot + "23+10 · 08:35 ET"
+                   with green/yellow tier coloring. Hidden when no apply. -->
+              <span class="morning-applied-badge" id="morning-applied-badge" hidden>
+                <span class="morning-applied-badge-dot" aria-hidden="true">●</span>
+                <span id="morning-applied-badge-text"></span>
+              </span>
+              <span class="muted-copy" id="morning-charts-meta"></span>
+              <button class="secondary-button" id="morning-build-btn" type="button" title="Run the morning scanner now (~2 min)">⟳ Build</button>
+              <!-- Apply button (moved from the now-removed Morning Universe
+                   panel — v7.15.1). Same logic, same id, just sits next to
+                   Build/Refresh in the top header. -->
+              <button class="secondary-button" id="morning-apply-btn" type="button" disabled title="Apply today's snapshot to the trading universe">Apply</button>
+              <button class="secondary-button" id="morning-charts-refresh-btn" type="button" title="Re-fetch snapshot + chart bars">↻ Refresh</button>
+              <span class="muted-copy" id="morning-apply-feedback"></span>
+            </div>
+          </div>
+        </div>
+        <div class="morning-charts-strip-wrap">
+          <div class="morning-charts-strip" id="morning-charts-grid">
+            <div class="morning-charts-empty muted-copy" id="morning-charts-empty">
+              No snapshot today. Click <strong>⟳ Build</strong> above to run the morning scanner.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Market Pulse (v7.15.1, 2026-05-05 — moved above Setup Watch
+           per operator request: "Dynamic Stocks → Market Pulse →
+           Setup Watch" ordering). -->
+      <section class="panel pulse-panel" id="pulse-panel">
+        <div class="pulse-header">
+          <div class="pulse-title-row">
+            <div>
+              <p class="eyebrow">Live Market</p>
+              <h2 style="margin:0;">Market Pulse</h2>
+            </div>
+            <div class="pulse-header-right">
+              <span class="market-badge" id="market-badge">Loading…</span>
+              <span class="muted-copy pulse-updated" id="pulse-updated"></span>
+              <button class="secondary-button pulse-refresh-btn" id="pulse-refresh-btn" type="button">↻ Refresh</button>
+            </div>
+          </div>
+        </div>
+        <div class="pulse-strip-wrap">
+          <div class="pulse-strip" id="pulse-strip">
+            <div class="pulse-loading">Fetching live market data…</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Setup Watch (v7.15a, compact layout in v7.15.1; moved into the
+           dashboard-top-left column in v7.16.4 so it sits directly under
+           Market Pulse and the right sidebar holds its full vertical
+           span). Read-only "why no setup" panel; refreshes every 30s. -->
+      <section class="panel setup-watch-section" id="setup-watch-section">
+        <div class="setup-watch-header">
+          <div class="setup-watch-title-row">
+            <div>
+              <p class="eyebrow">Diagnostic — read-only</p>
+              <h2 style="margin:0;">Setup Watch</h2>
+            </div>
+            <div class="setup-watch-header-right">
+              <span class="muted-copy" id="setup-watch-meta"></span>
+              <button class="secondary-button" id="setup-watch-refresh-btn" type="button" title="Re-fetch bars + diagnose">↻ Refresh</button>
+            </div>
+          </div>
+          <p class="setup-watch-footnote muted-copy" id="setup-watch-summary">
+            Per-symbol structural state — sweep-based predicates only fire on textbook setups.
+          </p>
+        </div>
+        <div class="setup-watch-table" id="setup-watch-list">
+          <div class="setup-watch-empty muted-copy" id="setup-watch-empty">
+            Loading diagnostic state…
+          </div>
+        </div>
+      </section>
+
+        </div><!-- /.dashboard-top-left -->
+
+        <!-- Sidebar: Auto-Trade controls + wallet summary (v7.16.2).
+             The wallet-header / autotrade-controls / wallet-summary blocks
+             that used to live inside #wallet-panel were moved up here so
+             the most-frequently-checked controls sit beside Morning Scanner
+             instead of at the bottom of the page. All element IDs are
+             preserved so the main.js bindings keep working. -->
+        <aside class="panel sidebar-panel" id="sidebar-account-panel" aria-label="Trading account & auto-trade controls">
+          <div class="wallet-header">
+            <div>
+              <p class="eyebrow" id="wallet-mode-label">Paper Trading Account</p>
+              <h2 style="margin:0;">Wallet</h2>
+            </div>
+            <div class="wallet-header-right">
+              <button class="trade-mode-badge paper" id="wallet-mode-badge" type="button" title="Click to switch between paper and live trading">PAPER</button>
+              <button class="secondary-button" id="wallet-refresh-btn" type="button">↻ Refresh</button>
+              <!-- v7.16.6 (2026-05-08): notification toggle moved here from
+                   inside the autotrade controls strip. Sits next to the
+                   PAPER + Refresh buttons in the wallet header. -->
+              <button class="notif-toggle" id="notif-toggle" type="button" title="Toggle sound & browser notifications">
+                <span id="notif-icon">🔔</span>
+              </button>
+              <!-- v7.16.7 (2026-05-08): WebSocket connection indicator
+                   moved here from the autotrade strip. Same pattern as
+                   the bell — global signal, lives in the wallet header. -->
+              <span class="ws-indicator disconnected" id="ws-indicator">● Connecting…</span>
+            </div>
+          </div>
+
+          <!-- AI Auto-Trade controls (moved from wallet-panel v7.16.2) -->
+          <div class="autotrade-controls" id="autotrade-controls">
+            <div class="autotrade-left">
+              <button class="autotrade-toggle" id="autotrade-toggle" type="button">
+                <span class="autotrade-toggle-dot" id="autotrade-dot"></span>
+                <span id="autotrade-toggle-label">Start AI Trading</span>
+              </button>
+              <span class="autotrade-status muted-copy" id="autotrade-status">Idle</span>
+              <!-- v7.16.x (2026-05-21): Autonomous toggle. When ON, a matched
+                   setup that clears every gate is auto-approved + auto-executed
+                   (no manual approval click). Capped at AUTONOMOUS_MAX_TRADES_
+                   PER_DAY/day. Independent of the Start/Stop switch. -->
+              <button class="autotrade-toggle" id="autonomous-toggle" type="button"
+                      title="Autonomous mode: when ON, matched setups auto-approve and auto-execute with no manual click (capped per day). When OFF, each trade waits for your approval.">
+                <span class="autotrade-toggle-dot" id="autonomous-dot"></span>
+                <span id="autonomous-toggle-label">Autonomous: OFF</span>
+              </button>
+              <!-- 🔔 notification toggle + ws-indicator moved to
+                   wallet-header-right (v7.16.6 / v7.16.7). -->
+            </div>
+            <!-- v7.16.8 (2026-05-08): Setups / Watching / Cache tiles
+                 removed at operator request. Setups was per-scan (not
+                 cumulative), Watching duplicated the Open Positions
+                 list right below, Cache only meant anything when the
+                 AI gate was on. Scans + Trades are the two tiles that
+                 actually answer "is the loop running, did anything fire". -->
+            <div class="autotrade-right">
+              <div class="autotrade-stat">
+                <span class="autotrade-stat-label">Scans</span>
+                <span class="autotrade-stat-value" id="at-scans">0</span>
+              </div>
+              <!-- v7.16.x (2026-05-21): "Today's Scans" — the ET-day count.
+                   "Scans" is cumulative for the uvicorn process lifetime
+                   (survives day boundaries; only resets on restart), which
+                   confused the day count. This tile shows today only. -->
+              <div class="autotrade-stat">
+                <span class="autotrade-stat-label">Today's Scans</span>
+                <span class="autotrade-stat-value" id="at-scans-today">0</span>
+              </div>
+              <div class="autotrade-stat">
+                <span class="autotrade-stat-label">Trades</span>
+                <span class="autotrade-stat-value" id="at-trades">0</span>
+              </div>
+              <!-- v7.16.x (2026-06-10): Today's P&L. Prefers Alpaca's
+                   equity − last_equity (ground truth, incl. open positions)
+                   once the account route exposes last_equity (staged backend
+                   passthrough — live after the next boundary restart); until
+                   then falls back to monitor-price P&L from today's closed +
+                   open positions in the status payload. -->
+              <div class="autotrade-stat">
+                <span class="autotrade-stat-label">Today's P&amp;L</span>
+                <span class="autotrade-stat-value" id="at-daily-pnl">—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Account summary cards (moved from wallet-panel v7.16.2) -->
+          <div class="wallet-summary" id="wallet-summary">
+            <div class="wallet-card wallet-card-primary">
+              <span class="wallet-card-label">Portfolio Value</span>
+              <span class="wallet-card-value" id="w-portfolio">—</span>
+            </div>
+            <div class="wallet-card">
+              <span class="wallet-card-label">Cash</span>
+              <span class="wallet-card-value" id="w-cash">—</span>
+            </div>
+            <div class="wallet-card">
+              <span class="wallet-card-label">Buying Power</span>
+              <span class="wallet-card-value" id="w-buying-power">—</span>
+              <span class="wallet-card-hint muted-copy" id="w-unsettled-hint" hidden></span>
+              <span class="wallet-card-hint wallet-pdt-hint" id="w-pdt-hint" hidden></span>
+            </div>
+            <div class="wallet-card">
+              <span class="wallet-card-label">Unrealized P&amp;L</span>
+              <span class="wallet-card-value" id="w-unrealized-pl">—</span>
+            </div>
+          </div>
+
+          <!-- Open positions (moved from wallet-panel v7.16.3) -->
+          <div class="wallet-section">
+            <div class="wallet-section-header">
+              <h3>Open Positions</h3>
+              <button class="ghost-button wallet-close-all-btn hidden" id="close-all-positions-btn" type="button">Close All</button>
+            </div>
+            <div id="wallet-positions" class="wallet-positions">
+              <p class="muted-copy">Loading positions…</p>
+            </div>
+          </div>
+
+          <!-- Recent trades (moved from wallet-panel v7.16.3) -->
+          <div class="wallet-section">
+            <div class="wallet-section-header">
+              <h3>Recent Trades</h3>
+              <div class="wallet-tab-bar" id="order-tabs">
+                <button class="wallet-tab wallet-tab-active" data-status="closed" type="button">Filled</button>
+                <button class="wallet-tab" data-status="open" type="button">Open</button>
+                <button class="wallet-tab" data-status="all" type="button">All</button>
+              </div>
+            </div>
+            <div id="wallet-orders" class="wallet-orders">
+              <p class="muted-copy">Loading orders…</p>
+            </div>
+          </div>
+        </aside>
+      </div><!-- /.dashboard-top-grid -->
+
+      <!-- Setup Watch was moved INTO the left column above (v7.16.4)
+           so it sits directly under Market Pulse and shares the column
+           width. The bottom of the page is now just the wallet-panel. -->
+
+      <!-- Wallet (positions / orders / perf / study).
+           v7.16.2 (2026-05-08): the wallet-header, autotrade-controls,
+           and wallet-summary cards moved up to the sidebar above so the
+           most-acted-on controls sit beside Morning Scanner. This panel
+           keeps the long-form content: approvals, position monitor,
+           AI trade log, performance dashboard, study session, open
+           positions, and recent trades. -->
+      <section class="panel wallet-panel" id="wallet-panel">
+
+        <!-- v7.15.1 (2026-05-05): the Morning Universe panel (chips +
+             watchlist tier + Apply button + applied banner) was removed
+             on operator request. Apply lives at the top of the page now,
+             next to Build/Refresh in the Dynamic Stocks header. The
+             chart strip + Setup Watch already cover the visibility the
+             chip panel was providing.
+
+             The Trading Universe editor (manual symbol add/remove) was
+             also removed from the visible UI — its DOM elements stay in
+             a hidden block below so main.js's existing bindings keep
+             working without null-deref crashes. To re-enable, drop the
+             ``hidden-section`` class. -->
+        <div class="universe-editor hidden-section" id="universe-editor" aria-hidden="true">
+          <div class="universe-header">
+            <span class="universe-count muted-copy" id="universe-count"></span>
+            <button class="ghost-button" id="universe-reset-btn" type="button" title="Reset to default" hidden>↻ Default</button>
+          </div>
+          <div class="universe-tags" id="universe-tags"></div>
+          <div class="universe-input-row">
+            <input type="text" id="universe-input" class="universe-input" placeholder="" maxlength="10" hidden />
+            <button class="secondary-button" id="universe-add-btn" type="button" hidden>+ Add</button>
+          </div>
+        </div>
+
+        <!-- Pending approvals (trades waiting for your confirmation) -->
+        <div class="autotrade-approvals hidden" id="autotrade-approvals">
+          <h3 style="margin:0 0 8px;">Trades Awaiting Your Approval</h3>
+          <div id="autotrade-approvals-list"></div>
+        </div>
+
+        <!-- Active position monitor (trailing stop + time exit) -->
+        <div class="autotrade-monitor hidden" id="autotrade-monitor">
+          <h3 style="margin:0 0 8px;">Position Monitor</h3>
+          <div id="autotrade-monitor-list"></div>
+        </div>
+
+        <!-- AI trade log (shown when auto-trade has trades) -->
+        <div class="autotrade-log hidden" id="autotrade-log">
+          <h3 style="margin:0 0 8px;">AI Trade Log</h3>
+          <div id="autotrade-log-list"></div>
+        </div>
+
+        <!-- AI Performance Dashboard -->
+        <div class="perf-dashboard hidden" id="perf-dashboard">
+          <div class="perf-header">
+            <h3 style="margin:0;">Performance</h3>
+            <div class="perf-controls">
+              <select id="perf-period" class="perf-select">
+                <option value="1">Today</option>
+                <option value="7" selected>7 Days</option>
+                <option value="30">30 Days</option>
+                <option value="90">90 Days</option>
+              </select>
+              <button class="ghost-button" id="perf-refresh-btn" type="button">↻</button>
+            </div>
+          </div>
+          <div class="perf-stats-grid" id="perf-stats-grid"></div>
+          <div class="perf-chart-wrap" id="perf-chart-wrap"></div>
+          <div class="perf-breakdowns" id="perf-breakdowns"></div>
+          <div class="perf-history" id="perf-history">
+            <h4 style="margin:0 0 6px;">Trade History</h4>
+            <div id="perf-history-list"></div>
+          </div>
+          <div class="perf-lessons collapsible-panel" id="perf-lessons" data-open="true">
+            <div class="perf-lessons-header collapsible-toggle">
+              <span class="collapsible-chevron">▾</span>
+              <h4 style="margin:0;">AI Lessons from Losing Trades</h4>
+              <button class="ghost-button" id="lessons-refresh-btn" type="button">↻</button>
+            </div>
+            <div class="collapsible-content">
+
+              <!-- Last 20 Losses -->
+              <div class="lessons-subsection collapsible-panel" data-open="false">
+                <div class="lessons-subheader collapsible-toggle">
+                  <span class="collapsible-chevron">▾</span>
+                  <h5 style="margin:0;">Last 20 Losses</h5>
+                  <span class="muted-copy lessons-sub-count" id="losses-count"></span>
+                </div>
+                <div class="collapsible-content">
+                  <div id="losses-list" class="losses-list"></div>
+                </div>
+              </div>
+
+              <!-- By Stock -->
+              <div class="lessons-subsection collapsible-panel" data-open="false">
+                <div class="lessons-subheader collapsible-toggle">
+                  <span class="collapsible-chevron">▾</span>
+                  <h5 style="margin:0;">Lessons by Stock</h5>
+                  <span class="muted-copy lessons-sub-count" id="stocks-count"></span>
+                </div>
+                <div class="collapsible-content">
+                  <div id="lessons-by-stock" class="lessons-by-stock"></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- After-Hours AI Study -->
+        <div class="study-panel collapsible-panel" id="study-panel" data-open="false">
+          <div class="study-header collapsible-toggle">
+            <span class="collapsible-chevron">▾</span>
+            <div class="study-title">
+              <p class="eyebrow">After-Hours</p>
+              <h3 style="margin:0;">AI Study Session</h3>
+              <p class="muted-copy study-desc">Review the full day's price action, find missed setups, and make the AI smarter for tomorrow.</p>
+            </div>
+            <div class="study-actions">
+              <span class="muted-copy study-status" id="study-status"></span>
+              <button class="secondary-button study-run-btn" id="study-run-btn" type="button">Run Study</button>
+            </div>
+          </div>
+          <div class="collapsible-content">
+            <div class="study-stocks-header">
+              <span class="muted-copy" id="study-stocks-count"></span>
+            </div>
+            <div id="study-by-stock" class="lessons-by-stock"></div>
+          </div>
+        </div>
+
+        <!-- Wallet summary, open positions, and recent trades all moved
+             to the sidebar above (v7.16.2 + v7.16.3). This section now
+             holds only the long-form panels: approvals, monitor, AI trade
+             log, performance dashboard, and the after-hours study. -->
+      </section>
+    </main>
+
+    <!-- Candlestick chart modal -->
+    <div id="chart-modal" class="chart-modal hidden" role="dialog" aria-modal="true" aria-labelledby="chart-modal-symbol">
+      <div class="chart-modal-backdrop"></div>
+      <div class="chart-modal-content">
+
+        <div class="chart-modal-header">
+          <div class="chart-modal-title">
+            <h2 id="chart-modal-symbol">—</h2>
+            <p class="eyebrow" id="chart-modal-eyebrow">1min</p>
+          </div>
+          <div class="chart-modal-actions">
+            <div class="tf-btn-group" id="modal-tf-btn-group">
+              <button class="tf-btn tf-btn-active" data-tf="1Min" type="button">1m</button>
+              <button class="tf-btn" data-tf="5Min" type="button">5m</button>
+              <button class="tf-btn" data-tf="15Min" type="button">15m</button>
+            </div>
+            <button id="analyze-btn" class="analyze-btn" type="button" disabled>Analyze with AI</button>
+            <button id="chart-close-btn" class="chart-close-btn" type="button">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <p id="chart-status" class="chart-status muted-copy">Loading chart data…</p>
+        <div id="chart-container" class="chart-container"></div>
+
+      </div>
+    </div>
+
+    <!-- Trading-mode switch modal -->
+    <div id="mode-modal" class="mode-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mode-modal-title">
+      <div class="mode-modal-backdrop" data-mode-dismiss="1"></div>
+      <div class="mode-modal-content">
+        <div class="mode-modal-header">
+          <h2 id="mode-modal-title">Switch Trading Mode</h2>
+          <button class="chart-close-btn" id="mode-modal-close" type="button" aria-label="Close">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+
+        <div class="mode-modal-body">
+          <!-- Mode flow visual: current → target -->
+          <div class="mode-flow">
+            <span class="trade-mode-badge" id="mode-flow-current">—</span>
+            <span class="mode-flow-arrow">→</span>
+            <span class="trade-mode-badge" id="mode-flow-target">—</span>
+          </div>
+
+          <!-- Body copy — swapped based on target mode -->
+          <p class="mode-modal-copy" id="mode-modal-copy"></p>
+
+          <!-- Hard blockers — disable Confirm when present -->
+          <div class="mode-blockers hidden" id="mode-blockers">
+            <h3>Can't switch yet</h3>
+            <ul id="mode-blockers-list"></ul>
+          </div>
+
+          <!-- Soft warning — running autotrade / pending approvals -->
+          <label class="mode-force-stop hidden" id="mode-force-stop-wrap">
+            <input type="checkbox" id="mode-force-stop-cb" />
+            <span id="mode-force-stop-label">Stop auto-trader and reject pending approvals before switching</span>
+          </label>
+
+          <!-- Credential status -->
+          <p class="mode-modal-hint muted-copy" id="mode-modal-hint"></p>
+        </div>
+
+        <div class="mode-modal-footer">
+          <button class="secondary-button" id="mode-modal-cancel" type="button">Cancel</button>
+          <button class="primary-button" id="mode-modal-confirm" type="button" disabled>Switch</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="./main.js?v=6" type="module"></script>
+    <script src="./morning-universe.js?v=2" type="module"></script>
+    <script src="./setup-watch.js?v=2" type="module"></script>
+  </body>
+</html>

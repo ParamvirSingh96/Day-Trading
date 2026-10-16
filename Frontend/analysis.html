@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Analysis — TradeHack</title>
+    <link rel="stylesheet" href="./styles.css?v=4" />
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  </head>
+  <body class="app-body">
+    <div class="background-grid"></div>
+    <main class="app-shell">
+
+      <!-- Top bar -->
+      <header class="workspace-topbar panel">
+        <div class="brand-wrap">
+          <div class="brand-mark">TL</div>
+          <div>
+            <p class="eyebrow">TradeHack Workspace</p>
+            <h1 class="brand-title">Market Tools</h1>
+          </div>
+        </div>
+        <nav class="workspace-nav">
+          <a href="./app.html" class="nav-link">Market Tools</a>
+          <a href="./dashboard.html" class="nav-link">Dashboard</a>
+        </nav>
+        <div class="workspace-user">
+          <div>
+            <strong id="session-user-name">Guest</strong>
+            <p id="session-user-email" class="muted-copy">Login required</p>
+          </div>
+          <button type="button" class="ghost-button" id="logout-btn">Logout</button>
+        </div>
+      </header>
+
+      <!-- Page heading -->
+      <section class="panel ap-hero">
+        <div class="ap-hero-row">
+          <a href="./app.html" class="ghost-button ap-back-btn">← Back</a>
+          <div class="ap-hero-title">
+            <p class="eyebrow" id="page-eyebrow">AI Chart Analysis</p>
+            <h2 id="page-symbol" class="ap-symbol">—</h2>
+          </div>
+          <button id="reanalyze-btn" class="secondary-button" type="button" disabled>↻ Re-analyze</button>
+        </div>
+      </section>
+
+      <!-- Candlestick chart -->
+      <section class="panel">
+        <div class="tf-bar">
+          <span class="tf-bar-label muted-copy">Timeframe</span>
+          <div class="tf-btn-group" id="tf-btn-group">
+            <button class="tf-btn tf-btn-active" data-tf="1Min" type="button">1m</button>
+            <button class="tf-btn" data-tf="5Min" type="button">5m</button>
+            <button class="tf-btn" data-tf="15Min" type="button">15m</button>
+          </div>
+          <!-- ICT overlay toggle: lets the user hide the zone/liquidity lines
+               if the chart gets too busy. State persists in localStorage. -->
+          <label class="ict-toggle" title="Show ICT zones, liquidity, and killzone pills">
+            <input type="checkbox" id="ict-toggle" checked />
+            <span>ICT</span>
+          </label>
+        </div>
+        <!-- ICT context pills — killzone / PD zone / OTE / last sweep etc.
+             Hidden until the first /market/ict fetch populates it. -->
+        <div id="ict-pills" class="ict-pills hidden"></div>
+        <p id="chart-status" class="chart-status muted-copy">Loading chart data…</p>
+        <div id="chart-container" class="ap-chart-container"></div>
+      </section>
+
+      <!-- Analysis loading indicator (shown while AI runs) -->
+      <section class="panel" id="analysis-loading-section">
+        <p id="analysis-status" class="chart-status muted-copy">
+          ✦ Analyzing chart with AI…
+        </p>
+      </section>
+
+      <!-- Analysis results (hidden until data arrives) -->
+      <section class="panel hidden" id="analysis-section">
+
+        <!-- v7.12: Watching — setups forming (sweep/MSS partial-state).
+             Rendered ABOVE matched-strategies so the eye sees what's
+             developing before what's actionable. Visually distinct
+             (dashed border, muted, ⏳ icon) so the user CAN'T mistake
+             a forming setup for a trade alert. -->
+        <div id="forming-strategies" class="forming-strategies hidden"></div>
+
+        <!-- Matched strategies (v7.11: tier badges + Top-setup header) -->
+        <div id="matched-strategies-header" class="matched-strategies-header hidden"></div>
+        <div id="matched-strategies" class="matched-strategies hidden"></div>
+        <div id="context-strategies" class="context-strategies hidden"></div>
+
+        <div class="analysis-header">
+          <div class="analysis-trend-block">
+            <span id="analysis-trend-badge" class="trend-badge">—</span>
+            <span id="analysis-strength" class="muted-copy"></span>
+            <span id="analysis-pattern" class="analysis-pattern"></span>
+          </div>
+          <div id="analysis-indicators" class="analysis-indicators"></div>
+        </div>
+
+        <div class="analysis-body">
+          <div class="analysis-col">
+            <p class="eyebrow">Key Levels</p>
+            <div id="analysis-levels" class="analysis-levels"></div>
+
+            <p class="eyebrow" style="margin-top:18px;">Reasoning</p>
+            <p id="analysis-reasoning" class="analysis-text"></p>
+
+            <p class="eyebrow" style="margin-top:14px;">Risks</p>
+            <p id="analysis-risks" class="analysis-text muted-copy"></p>
+          </div>
+
+          <div class="analysis-col">
+            <p class="eyebrow">Trade Recommendation</p>
+            <div id="analysis-rec" class="analysis-rec-card"></div>
+          </div>
+        </div>
+
+        <!-- P&L Calculator -->
+        <div id="pnl-card" class="pnl-card hidden">
+          <div class="pnl-header">
+            <p class="eyebrow">P&amp;L Calculator</p>
+            <div class="pnl-shares-row">
+              <label for="pnl-shares" class="muted-copy">Shares</label>
+              <input id="pnl-shares" class="pnl-shares-input" type="number" value="100" min="1" max="100000" />
+            </div>
+          </div>
+
+          <div class="pnl-direction-row">
+            <span id="pnl-dir" class="rec-direction long">LONG</span>
+            <span class="muted-copy">Entry <strong id="pnl-entry">—</strong></span>
+            <span class="muted-copy">Stop <strong id="pnl-stop" class="negative">—</strong></span>
+            <span class="muted-copy">Target <strong id="pnl-target" class="positive">—</strong></span>
+          </div>
+
+          <div class="pnl-grid">
+            <div class="pnl-scenario win">
+              <span class="pnl-label">🎯 Target hit</span>
+              <div class="pnl-numbers">
+                <span class="pnl-per-share positive" id="pnl-win-per-share">—</span>
+                <strong class="pnl-total positive" id="pnl-win-total">—</strong>
+              </div>
+            </div>
+            <div class="pnl-scenario loss">
+              <span class="pnl-label">✕ Stop hit</span>
+              <div class="pnl-numbers">
+                <span class="pnl-per-share negative" id="pnl-loss-per-share">—</span>
+                <strong class="pnl-total negative" id="pnl-loss-total">—</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Trade -->
+        <div id="trade-panel" class="trade-panel hidden">
+          <div class="trade-panel-header">
+            <p class="eyebrow">Quick Trade</p>
+            <span id="trade-mode-badge" class="trade-mode-badge paper">PAPER</span>
+          </div>
+          <div class="trade-inputs">
+            <label>
+              <span class="muted-copy">Shares</span>
+              <input id="trade-qty" class="trade-input" type="number" value="10" min="1" max="10000" />
+            </label>
+            <label>
+              <span class="muted-copy">Order type</span>
+              <select id="trade-type" class="trade-input">
+                <option value="market">Market</option>
+                <option value="limit" selected>Limit (at entry)</option>
+              </select>
+            </label>
+            <label class="trade-checkbox-label">
+              <input id="trade-bracket" type="checkbox" checked />
+              <span class="muted-copy">Auto stop-loss &amp; take-profit</span>
+            </label>
+          </div>
+          <div class="trade-actions">
+            <button id="trade-buy-btn" class="trade-btn trade-buy" type="button" disabled>Buy</button>
+            <button id="trade-sell-btn" class="trade-btn trade-sell" type="button" disabled>Sell</button>
+          </div>
+          <p id="trade-status" class="trade-status muted-copy"></p>
+        </div>
+
+        <p class="analysis-disclaimer muted-copy">
+          ⚠ AI analysis is for research only — not financial advice. Always manage risk.
+        </p>
+
+      </section>
+
+      <!-- Account & Positions -->
+      <section class="panel" id="account-section">
+        <div class="scanner-header">
+          <div>
+            <p class="eyebrow" id="account-mode-label">Paper Trading Account</p>
+            <h2 style="margin:0;">Portfolio</h2>
+          </div>
+          <button class="secondary-button" id="refresh-account-btn" type="button">↻ Refresh</button>
+        </div>
+
+        <div id="account-summary" class="account-summary">
+          <p class="muted-copy">Loading account…</p>
+        </div>
+
+        <div id="positions-list" class="positions-list"></div>
+        <div id="orders-list" class="orders-list" style="margin-top:14px;"></div>
+      </section>
+
+    </main>
+    <script src="./analysis.js?v=2" type="module"></script>
+  </body>
+</html>

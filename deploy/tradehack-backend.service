@@ -1,0 +1,30 @@
+[Unit]
+Description=TradeHack backend (FastAPI/uvicorn)
+# Wait for network AND Tailscale before starting, so the scheduler's
+# first Alpaca calls + the dashboard's Tailscale binding work on boot.
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradehack
+WorkingDirectory=/opt/tradehack/Backend
+Environment=PYTHONPATH=/opt/tradehack/Backend
+# Bind 0.0.0.0 so the dashboard (served on :3000) can reach the API on
+# :8000 over the Tailscale interface. ufw (see DEPLOY.md) blocks :8000
+# from the public internet — only the tailnet + localhost can reach it.
+ExecStart=/opt/tradehack/Backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Auto-restart on crash. This is OS-level resilience ABOVE the app's own
+# autotrade watchdog — if uvicorn itself dies (OOM, unhandled exc), systemd
+# brings it back within 5s and the scheduler recovers missed events.
+Restart=always
+RestartSec=5
+# Logs → journald (view with: journalctl -u tradehack-backend -f)
+StandardOutput=journal
+StandardError=journal
+# Light hardening — the process never needs to write outside its tree.
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

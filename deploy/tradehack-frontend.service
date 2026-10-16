@@ -1,0 +1,22 @@
+[Unit]
+Description=TradeHack frontend (no-cache static server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tradehack
+WorkingDirectory=/opt/tradehack/Frontend
+# Use the venv interpreter (guaranteed present + correct) rather than a
+# system python3. serve.py is stdlib-only, but this avoids surprises if
+# the distro's python3 is missing or odd.
+ExecStart=/opt/tradehack/Backend/venv/bin/python serve.py 3000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

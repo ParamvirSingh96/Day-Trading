@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.tradehack.morning-build.plist  —  v7.15a (2026-05-04)
+
+  macOS launchd job that runs the morning-universe builder at
+  08:30 ET on market days (Mon–Fri). Build + notify only; never
+  auto-applies, never auto-starts autotrade.
+
+  launchd requires absolute paths, so this file is a TEMPLATE: every
+  __TRADEHACK_BACKEND__ token is replaced with the real Backend/ path by
+  install.sh at install time (it never edits this source file).
+
+  Install:
+    cd Backend/scripts/launchd && ./install.sh
+
+  Verify:
+    launchctl list | grep tradehack.morning-build
+    # → "<exit_code> <pid> com.tradehack.morning-build"
+    # PID is shown only while running (briefly each morning).
+
+  Run on demand (smoke test, doesn't wait until 08:30):
+    launchctl start com.tradehack.morning-build
+
+  Uninstall:
+    launchctl unload -w ~/Library/LaunchAgents/com.tradehack.morning-build.plist
+    rm ~/Library/LaunchAgents/com.tradehack.morning-build.plist
+
+  Notes:
+  - StartCalendarInterval entries with both Hour+Minute fire DAILY.
+    To restrict to weekdays, we list five entries (Weekday 1..5)
+    rather than one entry — that's how launchd encodes "weekdays".
+    (`Weekday: 0` is Sunday on macOS; `1`..`5` is Mon..Fri.)
+  - Hour: 8, Minute: 30 is LOCAL time on the operator's box. As long
+    as the box is on America/New_York, that's ET. If the operator
+    travels and the box switches timezone, the cron fires at 08:30
+    in the new zone — which the wrapper script's TZ-aware logging
+    will surface in the log.
+  - `RunAtLoad` is FALSE: we do NOT want the job to fire when the
+    plist is loaded; only at the scheduled times.
+  - StandardOutPath / StandardErrorPath go to the same log dir the
+    wrapper script uses, so all output ends up in one place.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tradehack.morning-build</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__TRADEHACK_BACKEND__/scripts/launchd/morning_build_cron.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Mon–Fri @ 08:30 (local time). One dict per weekday. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key><integer>1</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>2</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>3</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>4</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>5</integer>
+            <key>Hour</key><integer>8</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+    </array>
+
+    <!-- Output goes to the same log directory the wrapper uses, so
+         a single tail catches both this and the wrapper's own log. -->
+    <key>StandardOutPath</key>
+    <string>__TRADEHACK_BACKEND__/data/research/launchd_morning_build.log</string>
+    <key>StandardErrorPath</key>
+    <string>__TRADEHACK_BACKEND__/data/research/launchd_morning_build.log</string>
+
+    <!-- Don't try to keep the job alive: it's a one-shot daily build. -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

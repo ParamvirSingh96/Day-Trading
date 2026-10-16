@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Performance Dashboard — TradeHack</title>
+    <link rel="stylesheet" href="./styles.css?v=3" />
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  </head>
+  <body class="app-body">
+    <div class="background-grid"></div>
+    <main class="app-shell">
+
+      <!-- Top bar -->
+      <header class="workspace-topbar panel">
+        <div class="brand-wrap">
+          <div class="brand-mark">TL</div>
+          <div>
+            <p class="eyebrow">TradeHack Workspace</p>
+            <h1 class="brand-title">Performance</h1>
+          </div>
+        </div>
+        <nav class="workspace-nav">
+          <a href="./app.html" class="nav-link">Market Tools</a>
+          <a href="./dashboard.html" class="nav-link nav-link-active">Dashboard</a>
+        </nav>
+        <div class="workspace-user">
+          <div>
+            <strong id="session-user-name">Guest</strong>
+            <p id="session-user-email" class="muted-copy">Login required</p>
+          </div>
+          <button type="button" class="ghost-button" id="logout-btn">Logout</button>
+        </div>
+      </header>
+
+      <!-- Controls bar -->
+      <section class="panel dash-controls">
+        <p class="eyebrow" id="dash-eyebrow">Performance · Last 30 days</p>
+        <div class="dash-controls-right">
+          <div class="tf-btn-group" id="period-btn-group">
+            <button class="tf-btn" data-days="7">7d</button>
+            <button class="tf-btn tf-btn-active" data-days="30">30d</button>
+            <button class="tf-btn" data-days="90">90d</button>
+            <button class="tf-btn" data-days="365">1y</button>
+          </div>
+          <button class="secondary-button" id="dash-export-btn" type="button">Export CSV</button>
+          <button class="secondary-button" id="dash-refresh-btn" type="button">↻ Refresh</button>
+        </div>
+      </section>
+
+      <!-- Stat cards -->
+      <section class="dash-stat-grid" id="dash-stat-grid">
+        <div class="dash-stat-card">
+          <span class="dash-stat-label">Total P&L</span>
+          <span class="dash-stat-value" id="ds-total-pnl">—</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-label">Win Rate</span>
+          <span class="dash-stat-value" id="ds-win-rate">—</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-label">Trades</span>
+          <span class="dash-stat-value" id="ds-trades">—</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-label">Profit Factor</span>
+          <span class="dash-stat-value" id="ds-profit-factor">—</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-label">Avg R-Multiple</span>
+          <span class="dash-stat-value" id="ds-avg-r">—</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-label">Max Drawdown</span>
+          <span class="dash-stat-value" id="ds-max-dd">—</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-label">Avg Win</span>
+          <span class="dash-stat-value" id="ds-avg-win">—</span>
+        </div>
+        <div class="dash-stat-card">
+          <span class="dash-stat-label">Avg Loss</span>
+          <span class="dash-stat-value" id="ds-avg-loss">—</span>
+        </div>
+      </section>
+
+      <!-- Cumulative P&L chart -->
+      <section class="panel">
+        <h2>Cumulative P&L</h2>
+        <div class="dash-chart-wrap" id="pnl-chart-wrap">
+          <p class="muted-copy" id="pnl-chart-status">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Daily P&L bar chart -->
+      <section class="panel">
+        <h2>Daily P&L</h2>
+        <div class="dash-chart-wrap" id="daily-chart-wrap">
+          <p class="muted-copy" id="daily-chart-status">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Performance by Symbol -->
+      <section class="panel">
+        <h2>Performance by Symbol</h2>
+        <div class="dash-table-wrap" id="by-symbol-wrap">
+          <p class="muted-copy">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Performance by Strategy -->
+      <section class="panel">
+        <h2>Performance by Strategy</h2>
+        <div class="dash-table-wrap" id="by-setup-wrap">
+          <p class="muted-copy">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Performance by Time of Day -->
+      <section class="panel">
+        <h2>Performance by Time of Day</h2>
+        <p class="muted-copy" style="margin-bottom:12px;">Shows which hours of the trading day (ET) are most profitable for the AI.</p>
+        <div class="dash-table-wrap" id="by-hour-wrap">
+          <p class="muted-copy">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Best & Worst trades -->
+      <section class="panel">
+        <h2>Best & Worst Trades</h2>
+        <div class="dash-bw-grid" id="best-worst-wrap">
+          <p class="muted-copy">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Recent trade log -->
+      <section class="panel">
+        <div class="dash-table-header">
+          <h2>Recent Trades</h2>
+          <button type="button" class="ghost-button trade-log-toggle" id="trade-log-toggle" hidden>
+            Show all
+          </button>
+        </div>
+        <div class="dash-table-wrap" id="trade-log-wrap">
+          <p class="muted-copy">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Paper Trade Simulator -->
+      <section class="panel" id="sim-section">
+        <div class="sim-header">
+          <div>
+            <h2 style="margin:0;">Paper Trade Simulator</h2>
+            <p class="muted-copy" style="margin:4px 0 0;">
+              Tracks every AI recommendation hypothetically — shows what your P&L would be if you followed every signal.
+            </p>
+          </div>
+          <div class="dash-controls-right">
+            <div class="tf-btn-group" id="sim-period-btn-group">
+              <button class="tf-btn tf-btn-active" data-days="7">7d</button>
+              <button class="tf-btn" data-days="14">14d</button>
+              <button class="tf-btn" data-days="30">30d</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sim stat cards -->
+        <div class="dash-stat-grid sim-stat-grid" id="sim-stat-grid">
+          <div class="dash-stat-card">
+            <span class="dash-stat-label">Hypothetical P&L</span>
+            <span class="dash-stat-value" id="sim-total-pnl">—</span>
+          </div>
+          <div class="dash-stat-card">
+            <span class="dash-stat-label">Win Rate</span>
+            <span class="dash-stat-value" id="sim-win-rate">—</span>
+          </div>
+          <div class="dash-stat-card">
+            <span class="dash-stat-label">Signals</span>
+            <span class="dash-stat-value" id="sim-signals">—</span>
+          </div>
+          <div class="dash-stat-card">
+            <span class="dash-stat-label">Profit Factor</span>
+            <span class="dash-stat-value" id="sim-profit-factor">—</span>
+          </div>
+          <div class="dash-stat-card">
+            <span class="dash-stat-label">Max Drawdown</span>
+            <span class="dash-stat-value" id="sim-max-dd">—</span>
+          </div>
+          <div class="dash-stat-card">
+            <span class="dash-stat-label">Approved P&L</span>
+            <span class="dash-stat-value" id="sim-approved-pnl">—</span>
+          </div>
+          <div class="dash-stat-card">
+            <span class="dash-stat-label">Missed P&L</span>
+            <span class="dash-stat-value" id="sim-missed-pnl">—</span>
+          </div>
+          <div class="dash-stat-card">
+            <span class="dash-stat-label">Open Sims</span>
+            <span class="dash-stat-value" id="sim-open">—</span>
+          </div>
+        </div>
+
+        <!-- Sim cumulative P&L chart -->
+        <div class="dash-chart-wrap" id="sim-chart-wrap">
+          <p class="muted-copy" id="sim-chart-status">Loading simulator data…</p>
+        </div>
+
+        <!-- Sim approval breakdown -->
+        <div class="sim-approval-breakdown" id="sim-approval-breakdown"></div>
+
+        <!-- Sim by symbol -->
+        <h3 style="margin:16px 0 8px;">By Symbol</h3>
+        <div class="dash-table-wrap" id="sim-by-symbol-wrap">
+          <p class="muted-copy">Loading…</p>
+        </div>
+
+        <!-- Sim trade log -->
+        <h3 style="margin:16px 0 8px;">Simulated Trades</h3>
+        <div class="dash-table-wrap" id="sim-trades-wrap">
+          <p class="muted-copy">Loading…</p>
+        </div>
+      </section>
+
+      <!-- AI Lessons learned -->
+      <section class="panel">
+        <h2>AI Lessons Learned</h2>
+        <p class="muted-copy" style="margin-bottom:12px;">
+          The AI reviews every losing trade and stores what went wrong. These lessons are fed back into future analysis to avoid repeating mistakes.
+        </p>
+        <div class="dash-table-wrap" id="lessons-wrap">
+          <p class="muted-copy">Loading…</p>
+        </div>
+      </section>
+
+    </main>
+    <script type="module" src="./dashboard.js"></script>
+  </body>
+</html>
