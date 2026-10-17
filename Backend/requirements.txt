@@ -12,4 +12,4 @@ python-dotenv>=1.0,<2.0
 httpx>=0.28,<0.29
 anthropic>=0.40,<1.0
 # Optional fallback model provider; only used when OPENAI_API_KEY is set.
-openai>=1.50,<2.0
+openai>=2.0,<3.0
