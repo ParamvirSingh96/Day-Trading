@@ -5,14 +5,26 @@ here assumes the paper-only configuration in `Backend/.env.example`.
 
 ## The operator account
 
-The first account registered on an empty database is the **operator** — the
-only kind of account that can see the broker account, place or close trades,
-start the autotrader, or subscribe to the live feed. Registration closes
-after that (`REGISTRATION_MODE=closed`); add emails to `OPERATOR_EMAILS` to
-grant another person operator access, and set `SCHEDULER_USER_EMAIL` to the
-operator the unattended scheduler should trade under. The build is paper-only
-(`PAPER_ONLY=true`): the mode switch to live is refused at the API and the
-broker client refuses any non-paper destination.
+Only an **operator** account can see the broker account, place or close
+trades, start the autotrader, or subscribe to the live feed. Operator status
+is granted exclusively by the local admin command — never by registering,
+never by an email match, never automatically:
+
+```bash
+cd Backend
+./venv/bin/python -m scripts.manage_operator create  --email you@example.com --name "You"
+./venv/bin/python -m scripts.manage_operator promote --email existing@example.com   # upgrade an account
+./venv/bin/python -m scripts.manage_operator demote  --email someone@example.com    # revokes their sessions too
+./venv/bin/python -m scripts.manage_operator list
+```
+
+Databases created before this control existed keep their accounts as
+non-operators until you promote the intended one. HTTP registration is closed
+by default (`REGISTRATION_MODE=closed`); opening it only ever creates
+view-only accounts. Set `SCHEDULER_USER_EMAIL` to the operator the unattended
+scheduler should trade under. The build is paper-only (`PAPER_ONLY=true`): the
+mode switch to live is refused at the API and the broker client refuses any
+non-paper destination.
 
 ## Two ways to operate
 

@@ -116,7 +116,7 @@ if (registerForm) {
       const message = error.message.includes("already exists")
         ? "That email is already registered. Try logging in instead."
         : error.message.includes("Registration is closed")
-          ? "Registration is closed on this instance — ask the operator to add your email to OPERATOR_EMAILS."
+          ? "Registration is closed on this instance — the operator provisions accounts locally."
           : error.message;
       setStatus(status, message, "error");
     } finally {

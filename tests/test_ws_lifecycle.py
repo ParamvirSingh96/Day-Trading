@@ -2,14 +2,12 @@
 (logout / expiry revoke an already-open socket)."""
 from __future__ import annotations
 
-import dataclasses
 import json
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from conftest import OPERATOR, VISITOR, register, register_and_login, session_cookie_header
-from app import auth as auth_mod
+from conftest import OPERATOR, VISITOR, open_registration, register_and_login, session_cookie_header
 from app import ws as ws_mod
 from app.models import UserSession
 
@@ -46,9 +44,7 @@ def test_operator_connects_and_pings(operator_client):
 
 
 def test_non_operator_cannot_subscribe(client, monkeypatch):
-    register(client, OPERATOR)
-    monkeypatch.setattr(auth_mod, "settings",
-                        dataclasses.replace(auth_mod.settings, registration_mode="open"))
+    open_registration(monkeypatch)
     visitor = client.__class__(client.app)
     register_and_login(visitor, VISITOR)
     headers = {**session_cookie_header(visitor), **ORIGIN}

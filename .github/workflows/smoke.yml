@@ -36,7 +36,7 @@ jobs:
 
       - name: Regression tests (pytest)
         working-directory: ${{ github.workspace }}
-        run: python -m pytest tests -q
+        run: python -m pytest tests -q --ignore=tests/browser
 
       - name: Smoke suites
         env:
@@ -49,6 +49,23 @@ jobs:
             python -m scripts.$s
             echo "::endgroup::"
           done
+
+  browser:
+    name: Browser rendering test (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        working-directory: Backend
+        run: |
+          pip install -r requirements.txt -c requirements.lock
+          pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+      - name: Rendering test against the real frontend + backend
+        run: python -m pytest tests/browser -q -rs
 
   audit:
     name: Dependency vulnerability scan

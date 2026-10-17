@@ -25,7 +25,6 @@ os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'test.db').as_posix()}"
 os.environ["PAPER_ONLY"] = "true"
 os.environ["DEMO_MODE"] = "true"
 os.environ["REGISTRATION_MODE"] = "closed"
-os.environ["OPERATOR_EMAILS"] = ""
 os.environ["CORS_ORIGINS"] = "http://testserver,http://127.0.0.1:3000"
 os.environ["SESSION_COOKIE_SECURE"] = "false"
 for _k in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY", "ALPACA_PAPER_API_KEY",
@@ -47,9 +46,17 @@ from app.fake_broker import reset_shared_backend, shared_backend  # noqa: E402
 from app.main import app  # noqa: E402
 from app.settings import settings  # noqa: E402
 
-# Keep trading-mode persistence out of the real data/ directory.
+# Keep trading-mode persistence out of the real data/ directory, and every
+# ~/.tradehack/* telemetry/state directory out of the real home directory
+# (the lifespan tests start the scheduler, which records per-day state).
 trading_mode._STATE_DIR = _TMP
 trading_mode._STATE_FILE = _TMP / "trading_mode.json"
+from app import autotrade, matched_outcomes, scan_stats, scan_stats_experimental, scheduler_state  # noqa: E402
+scheduler_state._STATE_DIR = _TMP / "state"
+scan_stats._OUT_DIR = _TMP / "scan_stats"
+scan_stats_experimental._OUT_DIR = _TMP / "scan_stats_experimental"
+matched_outcomes._OUT_DIR = _TMP / "matched_outcomes"
+autotrade._HANG_DUMP_DIR = _TMP / "hang_dumps"
 # Rate limits are per-IP and would trip across a test session.
 app.state.limiter.enabled = False
 
@@ -113,12 +120,30 @@ def session_cookie_header(client: TestClient) -> dict[str, str]:
 
 def register_and_login(client: TestClient, user: dict) -> dict:
     """Registration never issues a session (the UI routes through the
-    login page), so tests that need an authenticated client do both."""
+    login page), so tests that need an authenticated client do both.
+    Only works while REGISTRATION_MODE is open (see ``open_registration``)."""
     register(client, user)
     return login(client, user)
 
 
+def provision(user: dict) -> None:
+    """Provision an operator the way the administrator does: locally,
+    through ``auth.provision_operator`` (what scripts/manage_operator.py
+    calls) — never through an HTTP request."""
+    from app.auth import provision_operator
+    with SessionLocal() as s:
+        provision_operator(s, user["email"], name=user["name"], password=user["password"])
+
+
+def open_registration(monkeypatch) -> None:
+    import dataclasses
+    from app import auth as auth_mod
+    monkeypatch.setattr(auth_mod, "settings",
+                        dataclasses.replace(auth_mod.settings, registration_mode="open"))
+
+
 @pytest.fixture
 def operator_client(client: TestClient) -> TestClient:
-    register_and_login(client, OPERATOR)   # first account on an empty DB → operator
+    provision(OPERATOR)
+    login(client, OPERATOR)
     return client

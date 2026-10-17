@@ -35,10 +35,16 @@ def test_complete_demo_workflow(operator_client, backend):
     assert c.get("/trading/positions").json() == []
 
     orders = c.get("/trading/orders", params={"order_status": "all"}).json()
-    assert len(orders) >= 2 and {o["symbol"] for o in orders} == {"AAPL"}
+    assert {o["symbol"] for o in orders} == {"AAPL"}
+    assert sorted(o["side"] for o in orders) == ["buy", "sell"]
+    assert all(o["status"] == "filled" for o in orders)
 
+    # Manual orders live at the broker (asserted above via /trading/orders);
+    # /trading/history records autotrader-managed trades, so after a purely
+    # manual round-trip it is reachable and empty — not "the trade appears".
     history = c.get("/trading/history")
     assert history.status_code == 200, history.text
+    assert history.json() == {"count": 0, "trades": []}
 
     mode = c.get("/trading/mode").json()
     assert mode["mode"] == "paper"

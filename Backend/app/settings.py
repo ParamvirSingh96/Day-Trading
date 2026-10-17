@@ -40,16 +40,15 @@ class Settings:
     #                      constructed for, or send a mutation to, anything but
     #                      the exact Alpaca paper host. Live trading requires
     #                      PAPER_ONLY=false AND the pre-existing opt-ins.
-    #   registration_mode— "closed" (default): only the bootstrap account
-    #                      (first user on an empty DB) or OPERATOR_EMAILS may
-    #                      register. "open": anyone may register, but only
-    #                      operators reach account/trading controls.
-    #   operator_emails  — accounts granted operator access on register/login.
+    #   registration_mode— "closed" (default): HTTP registration is refused,
+    #                      even on an empty database. "open": anyone may
+    #                      register an ORDINARY account. Operator status is
+    #                      only ever granted by the local admin command
+    #                      (scripts/manage_operator.py).
     #   demo_mode        — serve synthetic market data + an in-memory broker
     #                      (app/fake_broker.py) so the app runs with no keys.
     paper_only: bool
     registration_mode: str
-    operator_emails: list[str]
     demo_mode: bool
     # v7.12.1 (2026-05-01): Layer 2 (Sonnet AI confidence gate + Haiku
     # pre-screen) on/off switch. When False, the autotrade loop trades
@@ -320,7 +319,6 @@ def get_settings() -> Settings:
             "open" if os.getenv("REGISTRATION_MODE", "closed").strip().lower() == "open"
             else "closed"
         ),
-        operator_emails=[e.lower() for e in _split_csv(os.getenv("OPERATOR_EMAILS", ""))],
         demo_mode=os.getenv("DEMO_MODE", "false").strip().lower() == "true",
         # v7.12.1: Layer-2 AI gate. Default False in Dev (per .env);
         # the autotrade loop runs predicate-only when this is off. Flip

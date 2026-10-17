@@ -20,9 +20,9 @@ def require_operator(user: User = Depends(require_current_user)) -> User:
     """Authenticated AND approved to control the shared broker account.
 
     Logging in is not enough: every account/order/position/autotrade/mode
-    route (and the WebSocket feed) requires ``User.is_operator``. Operators
-    are the bootstrap account on an empty database plus any email listed in
-    ``OPERATOR_EMAILS`` — see ``auth.register_user`` / ``auth.login_user``.
+    route (and the WebSocket feed) requires ``User.is_operator``, which is
+    granted only by the local admin command ``scripts/manage_operator.py``
+    (``auth.provision_operator``) — never by registration or configuration.
     """
     if not user.is_operator:
         raise HTTPException(

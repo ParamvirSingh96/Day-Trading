@@ -6,7 +6,7 @@ import base64
 import hashlib
 import os
 
-from conftest import OPERATOR, register
+from conftest import OPERATOR, open_registration, register
 from app import auth as auth_mod
 from app.models import User
 
@@ -53,7 +53,8 @@ def test_login_upgrades_a_legacy_hash_in_place(client, db):
     assert r2.status_code == 200
 
 
-def test_register_then_login_round_trip(client):
+def test_register_then_login_round_trip(client, monkeypatch):
+    open_registration(monkeypatch)
     register(client, OPERATOR)
     fresh = client.__class__(client.app)
     assert fresh.get("/auth/me").status_code == 401

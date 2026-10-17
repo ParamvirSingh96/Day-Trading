@@ -90,8 +90,8 @@ def _migrate_sqlite_columns() -> None:
         ("trade_records", "entry_fill_price", "FLOAT"),
         ("trade_records", "exit_fill_price",  "FLOAT"),
         ("trade_records", "exit_order_id",    "VARCHAR(64)"),
-        # 2026-10 hardening — operator boundary. Existing single-account
-        # databases are promoted by ``auth.ensure_operator_bootstrap``.
+        # 2026-10 hardening — operator boundary. Pre-existing accounts stay
+        # non-operators until promoted with scripts/manage_operator.py.
         ("users", "is_operator", "BOOLEAN NOT NULL DEFAULT 0"),
     ]
     # Indexes that `create_all` won't backfill on an existing DB.
@@ -164,12 +164,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info("startup env=%s database=%s paper_only=%s demo=%s registration=%s",
                 settings.app_env, settings.database_url.split("://")[0],
                 settings.paper_only, settings.demo_mode, settings.registration_mode)
+    # Operators are provisioned out-of-band only (scripts/manage_operator.py);
+    # startup never promotes anyone — it just says so loudly if none exists.
     try:
-        from .auth import ensure_operator_bootstrap
+        from .auth import OPERATOR_PROVISION_HINT, operator_count
         with SessionLocal() as db:
-            ensure_operator_bootstrap(db)
+            n_ops = operator_count(db)
+        if n_ops == 0:
+            logger.warning("no_operator_account %s", OPERATOR_PROVISION_HINT)
+        else:
+            logger.info("operators=%d", n_ops)
     except Exception as exc:
-        logger.warning("operator_bootstrap_failed err=%s", exc)
+        logger.warning("operator_check_failed err=%s", exc)
 
     # v7.13 Phase 1.6 — restore today's applied morning universe if
     # one exists on disk. Conservative default (do nothing → fall

@@ -121,59 +121,85 @@ def _create_session(db: Session, user: User, response: Response) -> None:
 
 
 # ── Operator boundary ────────────────────────────────────────────────────────
+# Operator status is NEVER granted over HTTP. Registration (when open) creates
+# ordinary accounts only; an empty database does not let the first request
+# claim the role; nothing is promoted automatically at startup or login. The
+# only way to create or promote an operator is the local administrative
+# command ``python -m scripts.manage_operator`` (which calls
+# ``provision_operator`` below) — an action that requires shell access to the
+# host, i.e. an out-of-band trust channel rather than a string in a request.
 
-def _is_invited_operator(email: str) -> bool:
-    return email in settings.operator_emails
+OPERATOR_PROVISION_HINT = (
+    "No operator account exists. Provision one locally with: "
+    "cd Backend && ./venv/bin/python -m scripts.manage_operator create --email <you@example.com> --name <Name>"
+)
 
 
-def _registration_decision(db: Session, email: str) -> tuple[bool, bool]:
-    """Return ``(allowed, becomes_operator)`` for a registration attempt.
+def registration_open() -> bool:
+    return settings.registration_mode == "open"
 
-    * Empty database → the first account is the bootstrap operator.
-    * Email listed in OPERATOR_EMAILS → allowed and an operator.
-    * REGISTRATION_MODE=open → allowed, but NOT an operator.
-    * Otherwise (default ``closed``) → refused.
+
+def operator_count(db: Session) -> int:
+    return int(db.scalar(select(func.count(User.id)).where(User.is_operator.is_(True))) or 0)
+
+
+def list_operators(db: Session) -> list[User]:
+    return list(db.scalars(select(User).where(User.is_operator.is_(True)).order_by(User.id)).all())
+
+
+def provision_operator(db: Session, email: str, *, name: str | None = None,
+                       password: str | None = None) -> tuple[User, str]:
+    """Create-or-promote the operator account. Idempotent.
+
+    Returns ``(user, action)`` where action is ``"created"``, ``"promoted"``
+    or ``"unchanged"``. Creating a new account requires ``name`` and a
+    password of at least 8 characters; promoting an existing account never
+    touches its password.
     """
-    user_count = int(db.scalar(select(func.count(User.id))) or 0)
-    if user_count == 0:
-        return True, True
-    if _is_invited_operator(email):
-        return True, True
-    if settings.registration_mode == "open":
-        return True, False
-    return False, False
-
-
-def ensure_operator_bootstrap(db: Session) -> None:
-    """Startup reconciliation for databases created before the operator
-    boundary existed: promote OPERATOR_EMAILS matches, and if the database
-    holds exactly one account with no operator at all, promote it (the
-    single-operator deployment this app assumes)."""
-    changed = False
-    for user in db.scalars(select(User)).all():
-        if _is_invited_operator(user.email) and not user.is_operator:
-            user.is_operator = True
-            changed = True
-            logger.info("operator_promoted_by_config user_id=%s", user.id)
-    if not db.scalar(select(func.count(User.id)).where(User.is_operator.is_(True))):
-        users = db.scalars(select(User)).all()
-        if len(users) == 1:
-            users[0].is_operator = True
-            changed = True
-            logger.info("operator_bootstrapped_single_account user_id=%s", users[0].id)
-    if changed:
+    email = _normalize_email(email)
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None:
+        if not name or not password or len(password) < 8:
+            raise ValueError("creating a new operator requires --name and a password of >= 8 characters")
+        salt, password_hash = _hash_password(password)
+        user = User(name=name.strip(), email=email, password_salt=salt,
+                    password_hash=password_hash, is_operator=True)
+        db.add(user)
         db.commit()
+        db.refresh(user)
+        logger.info("operator_created user_id=%s", user.id)
+        return user, "created"
+    if user.is_operator:
+        return user, "unchanged"
+    user.is_operator = True
+    db.commit()
+    logger.info("operator_promoted user_id=%s", user.id)
+    return user, "promoted"
+
+
+def revoke_operator(db: Session, email: str) -> bool:
+    """Demote an operator (returns True if a change was made). Their open
+    sessions are invalidated so the change takes effect immediately."""
+    email = _normalize_email(email)
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None or not user.is_operator:
+        return False
+    user.is_operator = False
+    db.query(UserSession).filter(UserSession.user_id == user.id).delete()
+    db.commit()
+    _revoke_user_sockets(user.id)
+    logger.info("operator_revoked user_id=%s", user.id)
+    return True
 
 
 def register_user(db: Session, payload: RegisterRequest, response: Response) -> AuthResponse:
-    email = _normalize_email(payload.email)
-    allowed, becomes_operator = _registration_decision(db, email)
-    if not allowed:
+    if not registration_open():
         logger.warning("register_refused_closed")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Registration is closed on this instance.",
         )
+    email = _normalize_email(payload.email)
     existing_user = db.scalar(select(User).where(User.email == email))
     if existing_user:
         raise HTTPException(
@@ -187,12 +213,12 @@ def register_user(db: Session, payload: RegisterRequest, response: Response) -> 
         email=email,
         password_salt=salt,
         password_hash=password_hash,
-        is_operator=becomes_operator,
+        is_operator=False,      # never over HTTP — see provision_operator
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    logger.info("register user_id=%s operator=%s", user.id, becomes_operator)
+    logger.info("register user_id=%s", user.id)
     return _build_auth_response("Account created successfully.", user)
 
 
@@ -212,9 +238,6 @@ def login_user(db: Session, payload: LoginRequest, response: Response) -> AuthRe
     if needs_rehash:
         user.password_salt, user.password_hash = _hash_password(payload.password)
         logger.info("password_rehashed user_id=%s iterations=%d", user.id, PBKDF2_ITERATIONS)
-    if _is_invited_operator(email) and not user.is_operator:
-        user.is_operator = True
-        logger.info("operator_promoted_by_config user_id=%s", user.id)
 
     # Invalidate all existing sessions for this user before issuing a new one.
     # This prevents a leaked or stale token from remaining valid after a fresh

@@ -133,14 +133,14 @@ each backed by regression tests in `tests/`:
 
 | Finding | Fix | Proven by |
 |---|---|---|
-| Open registration gave any account the shared broker controls | Operator boundary: `User.is_operator`; registration **closed** by default (bootstrap account + `OPERATOR_EMAILS`); every account/order/position/autotrade/mode/market route and the WebSocket feed require an operator | `test_operator_boundary.py` — a logged-in non-operator gets 403 everywhere |
+| Open registration gave any account the shared broker controls | Operator boundary: `User.is_operator`; every account/order/position/autotrade/mode/market route and the WebSocket feed require an operator. Operator status is **never granted over HTTP** — not to the first account on an empty database, not by email, not at login or startup — only by the local admin command `scripts/manage_operator.py` (shell access is the trust boundary). Registration is closed by default and, when opened, creates ordinary accounts only | `test_operator_boundary.py` — a fresh instance refuses to hand out the role; self-registered accounts stay ordinary across logins and restarts; provisioning is idempotent and demotion revokes sessions immediately; `test_startup.py` — the real lifespan migrates a pre-hardening schema without promoting its sole legacy account |
 | Paper mode was a label; a "paper" config could point at the live host | Destination validation at client construction and before every mutation; `PAPER_ONLY` build flag | `test_paper_boundary.py` — label/host mismatches, scheme, port, userinfo, path smuggling and mid-process env flips are all refused with zero requests leaving the process |
-| Analysis/dashboard text rendered via `innerHTML` without escaping | `esc()` applied consistently across all frontend modules | `test_frontend_escaping.py` — static guard that fails on any new unescaped interpolation |
+| Analysis/dashboard text rendered via `innerHTML` without escaping | `esc()` applied consistently across all frontend modules | `test_frontend_escaping.py` — static guard that fails on any new unescaped interpolation; `tests/browser/test_rendering.py` — a real Chromium session loads the analysis page with HTML/script-shaped values in the originally flagged fields and asserts they render as literal text, create no elements, run no script, and leave the controls working |
 | Broker rejections surfaced as generic 500s | Typed errors (`InvalidOrderRequest`, `OrderRejected`, `BrokerUnavailable`, `UncertainOutcome`) translated to 400/422/503/502 with structured bodies; mutations are never retried | `test_orders.py` — rejection, 5xx and timeout each map to the right status, exactly one attempt |
 | Order prices unvalidated (negative, non-finite, wrong fields per type, inverted bracket legs) | Pydantic cross-field validators; non-finite tokens no longer crash the error encoder | `test_orders.py` — 15 invalid shapes rejected before the broker is contacted |
 | WebSocket authenticated once, never re-checked; no Origin check | Origin allow-list, operator-only, session re-validated per message and every 30 s; logout/re-login close bound sockets | `test_ws_lifecycle.py` |
 | PBKDF2 at 120k iterations | 600k iterations in a versioned hash format; legacy hashes verify and upgrade on next login | `test_password_hashing.py` |
-| Unscanned, loosely pinned dependencies | `requirements.lock` + `pip-audit` job in CI (three advisories fixed by upgrading `python-multipart`, `starlette`, `anyio`) | CI `audit` job |
+| Unscanned, loosely pinned dependencies | `requirements.lock` + `pip-audit` job in CI (eleven advisories across `python-multipart`, `starlette`, `anyio` fixed by upgrading) | CI `audit` job — reports no *known* advisories for the locked set at scan time; it says nothing about application logic |
 
 `DEMO_MODE=true` runs the whole app against an in-process fake broker with
 synthetic bars (`app/fake_broker.py`) — the same fake the tests use — so a clean
@@ -169,19 +169,27 @@ cd Frontend
 python3 serve.py 3000
 ```
 
-Open http://127.0.0.1:3000, register an account, log in, and you land in
-`app.html`. The first account created on an empty database is the operator;
-registration is closed after that unless `REGISTRATION_MODE=open` or the email
-is listed in `OPERATOR_EMAILS`. `./start-lan.sh` starts both servers bound to
+Create the operator account locally (this is the only way to get one — HTTP
+registration never grants it):
+
+```bash
+cd Backend
+./venv/bin/python -m scripts.manage_operator create --email you@example.com --name "Your Name"
+```
+
+Then open http://127.0.0.1:3000, log in, and you land in `app.html`.
+Registration over HTTP is closed by default; `REGISTRATION_MODE=open` allows
+ordinary (view-only) accounts. `./start-lan.sh` starts both servers bound to
 your LAN address so the dashboard works from a phone. For a 24/7 host see [deploy/DEPLOY.md](deploy/DEPLOY.md);
 for the daily operating procedure see [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Tests
 
-Two layers, both run by GitHub Actions on every push (`.github/workflows/smoke.yml`):
+Three layers, all run by GitHub Actions on every push (`.github/workflows/smoke.yml`):
 
-- **pytest regression suite** (`tests/`) — the security boundaries above plus a
-  complete demo workflow, all against the in-process fake broker:
+- **pytest regression suite** (`tests/`) — the security boundaries above, the
+  full startup/migration lifespan, and a complete demo workflow, all against
+  the in-process fake broker:
   ```bash
   pip install -r Backend/requirements-dev.txt
   python -m pytest tests -q
@@ -196,6 +204,11 @@ Two layers, both run by GitHub Actions on every push (`.github/workflows/smoke.y
     ./venv/bin/python -m scripts.$s | tail -1
   done
   ```
+
+- **browser rendering test** (`tests/browser/`) — Playwright drives real
+  Chromium against the real frontend and backend (`python -m playwright install
+  chromium` once locally; skipped automatically if Chromium or the app's ports
+  are unavailable).
 
 A separate CI job runs `pip-audit` against the locked runtime dependencies.
 
