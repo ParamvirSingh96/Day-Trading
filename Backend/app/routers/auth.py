@@ -38,7 +38,10 @@ def me(
     session_token: str | None = Cookie(default=None, alias=settings.session_cookie_name),
 ) -> AuthResponse:
     user = get_authenticated_user(db, session_token)
-    return AuthResponse(message="Authenticated.", user=AuthUser(name=user.name, email=user.email))
+    return AuthResponse(
+        message="Authenticated.",
+        user=AuthUser(name=user.name, email=user.email, is_operator=bool(user.is_operator)),
+    )
 
 
 @router.post("/logout")

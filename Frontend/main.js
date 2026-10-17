@@ -232,7 +232,9 @@ async function renderSession() {
   try {
     const session = await fetchSession();
     sessionUserName.textContent  = session.user.name;
-    sessionUserEmail.textContent = session.user.email;
+    sessionUserEmail.textContent = session.user.is_operator === false
+      ? `${session.user.email} · view-only (not an operator)`
+      : session.user.email;
     return session;
   } catch {
     window.location.href = "./login.html";
@@ -847,7 +849,7 @@ function _brierChipHtml(a) {
   const bucket = d.bucket || "?";
   const pred = d.predicted_mean != null ? `${(d.predicted_mean * 100).toFixed(0)}%` : "—";
   const emp = d.empirical_hit_rate != null ? `${(d.empirical_hit_rate * 100).toFixed(0)}%` : "—";
-  const n = d.n != null ? `n=${d.n}` : "";
+  const n = d.n != null ? `n=${esc(d.n)}` : "";
   const mult = a.brier_multiplier;
   const multTxt = _fmtMult(mult);
   const cls = _multPillClass(mult);
@@ -889,8 +891,8 @@ function _haikuChipHtml(a) {
   const tip = reason
     ? `Pre-screened by Haiku (#11) — ${reason}`
     : "Pre-screened by Haiku (#11)";
-  const label = reason ? esc(String(reason)) : "pre-screened";
-  return `<span class="evidence-chip haiku up" title="${esc(tip)}">⚡ Haiku ✓ · ${label}</span>`;
+  const label = reason ? String(reason) : "pre-screened";
+  return `<span class="evidence-chip haiku up" title="${esc(tip)}">⚡ Haiku ✓ · ${esc(label)}</span>`;
 }
 
 // RS chip (#12) — relative strength / weakness vs SPY. Emoji flips
@@ -1117,9 +1119,9 @@ function renderAutotradeStatus(data) {
       return `
         <div class="monitor-card ${isOpen ? "expanded" : ""}" data-symbol="${mSym}">
           <div class="monitor-card-header" onclick="this.parentElement.classList.toggle('expanded')">
-            <span class="autotrade-log-side ${dirCls}">${esc(m.direction).toUpperCase()}</span>
+            <span class="autotrade-log-side ${dirCls}">${esc(String(m.direction || "").toUpperCase())}</span>
             <strong class="monitor-symbol">${mSym}</strong>
-            <span class="monitor-qty">${m.qty} shares</span>
+            <span class="monitor-qty">${esc(m.qty)} shares</span>
             <span class="monitor-pl ${plCls}">${plSign}$${Math.abs(plTotal).toFixed(2)} (${plSign}${plPct.toFixed(2)}%)</span>
             <span class="monitor-chevron">&#9660;</span>
           </div>
@@ -1183,7 +1185,7 @@ function renderAutotradeStatus(data) {
               <div class="monitor-hold-bar">
                 <div class="monitor-hold-fill ${holdPct > 80 ? "warning" : ""}" style="width:${holdPct}%"></div>
               </div>
-              <span class="monitor-hold-time">${holdStr} / ${m.max_hold_minutes}m</span>
+              <span class="monitor-hold-time">${holdStr} / ${esc(m.max_hold_minutes)}m</span>
             </div>
             <div class="monitor-time-left ${holdPct > 80 ? "warning" : ""}">
               ${holdPct > 80 ? "⚠ " : ""}${timeLeftStr} remaining
@@ -1253,8 +1255,8 @@ function renderAutotradeStatus(data) {
       // attempt to submit. The backend enforces the same rules regardless.
       const gate = preTradeBlock({ side: a.side || "buy", notional: szTotal });
       const approveBtn = gate.blocked
-        ? `<button class="approval-btn approve blocked" data-id="${a.id}" type="button" disabled title="${esc(gate.reason)}">🚫 Blocked</button>`
-        : `<button class="approval-btn approve" data-id="${a.id}" type="button">Approve Trade</button>`;
+        ? `<button class="approval-btn approve blocked" data-id="${esc(a.id)}" type="button" disabled title="${esc(gate.reason)}">🚫 Blocked</button>`
+        : `<button class="approval-btn approve" data-id="${esc(a.id)}" type="button">Approve Trade</button>`;
       const gateNoticeHtml = gate.blocked
         ? `<div class="approval-gate-notice">⚠️ ${esc(gate.reason)}</div>`
         : "";
@@ -1264,44 +1266,44 @@ function renderAutotradeStatus(data) {
       // setup still qualifies.
       const actionsHtml = `
         ${approveBtn}
-        <button class="approval-btn reject" data-id="${a.id}" type="button">Reject</button>`;
+        <button class="approval-btn reject" data-id="${esc(a.id)}" type="button">Reject</button>`;
       const szMethod = sz.method === "risk_based" ? "Risk-based" : "Portfolio %";
       const szMult = sz.confidence_multiplier || 1.0;
       const szMaxAffordable = sz.max_affordable || 0;
       const szSpendable = sz.spendable || sz.cash || sz.buying_power || 0;
-      const maxAttr = szMaxAffordable > 0 ? `max="${szMaxAffordable}"` : "";
+      const maxAttr = szMaxAffordable > 0 ? `max="${esc(szMaxAffordable)}"` : "";
       const bpHint = szSpendable > 0
-        ? `<span class="sizing-bp">Max ${szMaxAffordable.toLocaleString("en-US")} shares · Cash $${szSpendable.toLocaleString("en-US", {maximumFractionDigits: 0})}</span>`
+        ? `<span class="sizing-bp">Max ${esc(szMaxAffordable.toLocaleString("en-US"))} shares · Cash $${esc(szSpendable.toLocaleString("en-US", {maximumFractionDigits: 0}))}</span>`
         : "";
 
       let sizingHtml = `
         <div class="approval-sizing">
           <div class="approval-sizing-header">
             <span class="approval-label">Position Size</span>
-            <span class="approval-sizing-method">${szMethod}${szMult > 1 ? ` · ${szMult}x conf boost` : ""}</span>
+            <span class="approval-sizing-method">${szMethod}${szMult > 1 ? ` · ${esc(szMult)}x conf boost` : ""}</span>
           </div>
           <div class="approval-sizing-controls">
-            <button class="sizing-btn sizing-minus" data-id="${a.id}" type="button">−</button>
+            <button class="sizing-btn sizing-minus" data-id="${esc(a.id)}" type="button">−</button>
             <div class="sizing-qty-display">
-              <input type="number" class="sizing-qty" data-id="${a.id}" value="${szQty}" min="1" ${maxAttr} step="1" inputmode="numeric" />
+              <input type="number" class="sizing-qty" data-id="${esc(a.id)}" value="${esc(szQty)}" min="1" ${maxAttr} step="1" inputmode="numeric" />
               <span class="sizing-unit">shares</span>
             </div>
-            <button class="sizing-btn sizing-plus" data-id="${a.id}" type="button">+</button>
+            <button class="sizing-btn sizing-plus" data-id="${esc(a.id)}" type="button">+</button>
           </div>
           <div class="approval-sizing-summary">
-            <span class="sizing-total" data-id="${a.id}" data-price="${szPrice}" data-max="${szMaxAffordable}">$${szTotal.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+            <span class="sizing-total" data-id="${esc(a.id)}" data-price="${esc(szPrice)}" data-max="${esc(szMaxAffordable)}">$${esc(szTotal.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2}))}</span>
             <span class="sizing-label">total cost</span>
             ${bpHint}
-            ${sz.risk_budget ? `<span class="sizing-risk">Risk budget: $${sz.risk_budget.toLocaleString("en-US", {minimumFractionDigits: 0})}</span>` : ""}
+            ${sz.risk_budget ? `<span class="sizing-risk">Risk budget: $${esc(sz.risk_budget.toLocaleString("en-US", {minimumFractionDigits: 0}))}</span>` : ""}
             ${sz.stop_distance ? `<span class="sizing-risk">Stop distance: $${sz.stop_distance.toFixed(2)}</span>` : ""}
           </div>
         </div>`;
 
       return `
-        <div class="${cardClass}" data-approval-id="${a.id}">
+        <div class="${cardClass}" data-approval-id="${esc(a.id)}">
           <div class="approval-card-top">
             <div class="approval-card-header">
-              <span class="autotrade-log-side ${a.side}">${esc(String(a.side || "").toUpperCase())}</span>
+              <span class="autotrade-log-side ${esc(a.side)}">${esc(String(a.side || "").toUpperCase())}</span>
               <strong class="approval-symbol">${esc(a.symbol)}</strong>
               ${timerHtml}
             </div>
@@ -1370,14 +1372,14 @@ function renderAutotradeStatus(data) {
       return `
         <div class="autotrade-log-row">
           <span class="autotrade-log-time">${time}</span>
-          <span class="autotrade-log-side ${t.side}">${esc(t.side)}</span>
+          <span class="autotrade-log-side ${esc(t.side)}">${esc(t.side)}</span>
           <span class="autotrade-log-symbol">${esc(t.symbol)}</span>
           <span class="autotrade-log-setup">${esc(t.setup)}</span>
           ${confirmDetail}
           ${exitDetail}
           ${holdDetail}
           <span class="autotrade-log-conf">${(t.confidence * 100).toFixed(0)}%</span>
-          <span class="autotrade-log-status ${t.status}">${esc(statusLabel)}</span>
+          <span class="autotrade-log-status ${esc(t.status)}">${esc(statusLabel)}</span>
         </div>`;
     }).join("");
   } else {
@@ -2168,11 +2170,11 @@ async function loadOrders(status) {
       const price = o.filled_avg_price
         ? fmtUSD(o.filled_avg_price)
         : o.limit_price ? `Limit ${fmtUSD(o.limit_price)}` : "Market";
-      const statusCls = (o.status || "").toLowerCase().replace(/ /g, "_");
+      const statusCls = esc((o.status || "").toLowerCase().replace(/ /g, "_"));
       const time = fmtTime(o.filled_at || o.submitted_at);
       return `
         <div class="wallet-order-row">
-          <span class="wallet-order-side ${o.side}">${esc(o.side)}</span>
+          <span class="wallet-order-side ${esc(o.side)}">${esc(o.side)}</span>
           <span class="wallet-order-symbol">${esc(o.symbol)}</span>
           <span class="wallet-order-detail">${esc(o.qty)} @ ${price}</span>
           <span class="wallet-order-time">${time}</span>
@@ -2571,11 +2573,11 @@ function renderPerfStats(p) {
       <span class="perf-stat-label">Total P&L</span>
     </div>
     <div class="perf-stat">
-      <span class="perf-stat-value">${p.total_trades}</span>
+      <span class="perf-stat-value">${esc(p.total_trades)}</span>
       <span class="perf-stat-label">Trades</span>
     </div>
     <div class="perf-stat">
-      <span class="perf-stat-value ${p.win_rate >= 50 ? "positive" : "negative"}">${p.win_rate}%</span>
+      <span class="perf-stat-value ${p.win_rate >= 50 ? "positive" : "negative"}">${esc(p.win_rate)}%</span>
       <span class="perf-stat-label">Win Rate</span>
     </div>
     <div class="perf-stat">
@@ -2671,8 +2673,8 @@ function renderPerfBreakdowns(p) {
       html += `
         <div class="perf-breakdown-row">
           <strong>${esc(sym)}</strong>
-          <span>${s.trades} trades</span>
-          <span>${s.win_rate}% win</span>
+          <span>${esc(s.trades)} trades</span>
+          <span>${esc(s.win_rate)}% win</span>
           <span class="${cls}">${s.pnl >= 0 ? "+" : ""}${fmtUSD(s.pnl)}</span>
         </div>`;
     }
@@ -2688,8 +2690,8 @@ function renderPerfBreakdowns(p) {
       html += `
         <div class="perf-breakdown-row">
           <strong>${esc(setup)}</strong>
-          <span>${s.trades} trades</span>
-          <span>${s.win_rate}% win</span>
+          <span>${esc(s.trades)} trades</span>
+          <span>${esc(s.win_rate)}% win</span>
           <span class="${cls}">${s.pnl >= 0 ? "+" : ""}${fmtUSD(s.pnl)}</span>
         </div>`;
     }
@@ -2720,13 +2722,13 @@ function renderPerfHistory(trades) {
     const rStr = t.r_multiple != null ? `${t.r_multiple > 0 ? "+" : ""}${t.r_multiple.toFixed(1)}R` : "";
     const isClosedLoss = t.pnl != null && t.pnl < 0 && t.closed_at;
     const reviewBtn = isClosedLoss
-      ? `<button class="perf-trade-review" data-trade-id="${t.id}" title="Have the AI review this trade and add a lesson">Review</button>`
+      ? `<button class="perf-trade-review" data-trade-id="${esc(t.id)}" title="Have the AI review this trade and add a lesson">Review</button>`
       : `<span class="perf-trade-review-spacer"></span>`;
 
     return `
-      <div class="perf-trade-row" data-trade-id="${t.id}">
+      <div class="perf-trade-row" data-trade-id="${esc(t.id)}">
         <span class="perf-trade-time">${time}</span>
-        <span class="autotrade-log-side ${t.side}">${esc(t.side)}</span>
+        <span class="autotrade-log-side ${esc(t.side)}">${esc(t.side)}</span>
         <span class="perf-trade-symbol">${esc(t.symbol)}</span>
         <span class="perf-trade-setup">${esc(t.setup)}</span>
         <span class="perf-trade-entry">$${(t.entry_price || 0).toFixed(2)}</span>

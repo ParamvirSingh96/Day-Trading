@@ -67,6 +67,19 @@ logger = logging.getLogger("tradehack.trading_mode")
 
 Mode = Literal["paper", "live"]
 
+
+class PaperBoundaryViolation(RuntimeError):
+    """Raised whenever anything would route trading traffic outside the
+    approved paper destination while the build is paper-only, or to a host
+    that does not match the selected mode. Mapped to HTTP 403 by the API."""
+
+
+def paper_only_enabled() -> bool:
+    """PAPER_ONLY=true (the default) makes live trading unreachable: the
+    mode cannot be switched to live and the broker client refuses any
+    non-paper destination. Tests monkeypatch this function."""
+    return bool(settings.paper_only)
+
 # ── Persistence ──────────────────────────────────────────────────────────────
 
 _STATE_DIR  = BASE_DIR / "data"
@@ -201,7 +214,13 @@ def get_mode() -> Mode:
     with _LOCK:
         if _mode is not None:
             return _mode
-        _mode = _load_persisted_mode() or _default_mode()
+        loaded = _load_persisted_mode() or _default_mode()
+        if loaded == "live" and paper_only_enabled():
+            # A persisted or env-derived "live" cannot survive a paper-only
+            # build: never trust state on disk over the configured boundary.
+            logger.warning("trading_mode_forced_paper reason=PAPER_ONLY requested=%s", loaded)
+            loaded = "paper"
+        _mode = loaded
         logger.info("trading_mode_loaded mode=%s source=%s",
                     _mode, "persist" if _STATE_FILE.exists() else "default")
         return _mode
@@ -218,6 +237,12 @@ def set_mode(mode: Mode) -> None:
     """
     if mode not in ("paper", "live"):
         raise ValueError(f"mode must be 'paper' or 'live', got {mode!r}")
+    if mode == "live" and paper_only_enabled():
+        raise PaperBoundaryViolation(
+            "This build is paper-only (PAPER_ONLY=true): live trading mode is "
+            "not available. Set PAPER_ONLY=false, configure live credentials, "
+            "and set LIVE_TRADING_ENABLED=yes to enable real-money trading."
+        )
     global _mode
     with _LOCK:
         _write_persisted_mode(mode)

@@ -228,13 +228,19 @@ class AlpacaBarsRequest:
 
 
 class AlpacaMarketDataClient:
-    def __init__(self) -> None:
+    def __init__(self, transport: httpx.BaseTransport | None = None) -> None:
         # Market-data keys follow the active trading mode so a user
         # with different data subscriptions per account (paper free-tier
         # vs. live Algo+) gets the feed that matches their current
         # selection. Falls back to legacy ALPACA_API_KEY via
         # ``trading_mode.get_credentials``.
-        api_key, secret_key, _ = trading_mode.get_credentials()
+        if settings.demo_mode:
+            # DEMO_MODE: synthetic bars/snapshots from app/fake_broker.py.
+            from .fake_broker import shared_backend
+            api_key, secret_key = "demo", "demo"
+            transport = transport or shared_backend().transport()
+        else:
+            api_key, secret_key, _ = trading_mode.get_credentials()
         if not api_key or not secret_key:
             active_mode = trading_mode.get_mode()
             raise ValueError(
@@ -250,6 +256,7 @@ class AlpacaMarketDataClient:
                 "APCA-API-SECRET-KEY": secret_key,
             },
             timeout=30.0,
+            transport=transport,
         )
 
     def close(self) -> None:
@@ -393,11 +400,104 @@ class AlpacaMarketDataClient:
         return bars_by_symbol
 
 
+# ── Broker error types ────────────────────────────────────────────────────────
+# The API layer translates these into structured responses (see main.py).
+# Mutations are never retried on any of them: an UncertainOutcome means the
+# request MAY have reached the broker — the caller must re-check broker state
+# before resubmitting anything.
+
+class AlpacaError(Exception):
+    """Base class for broker-boundary failures."""
+
+
+class InvalidOrderRequest(AlpacaError, ValueError):
+    """The request was rejected locally before reaching the broker."""
+
+
+class OrderRejected(AlpacaError):
+    """The broker refused the request (4xx)."""
+
+    def __init__(self, status_code: int, message: str, body: Any = None) -> None:
+        super().__init__(f"Alpaca rejected request ({status_code}): {message}")
+        self.status_code = status_code
+        self.message = message
+        self.body = body
+
+
+class BrokerUnavailable(AlpacaError):
+    """The broker is unreachable or returned a server error (5xx / 429 exhausted)."""
+
+
+class UncertainOutcome(AlpacaError):
+    """A mutation timed out or lost its connection: the broker may have
+    accepted it. Never resubmit blindly — reconcile by order id / position."""
+
+
+from .trading_mode import PaperBoundaryViolation  # noqa: E402  (re-exported)
+
+
+def _broker_detail(r: httpx.Response) -> str:
+    try:
+        return str(r.json().get("message", r.text))
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        return r.text
+
+
+def _raise_for_broker_status(r: httpx.Response) -> None:
+    """Map a broker HTTP status onto the typed errors (mutation paths)."""
+    if r.status_code < 400:
+        return
+    detail = _broker_detail(r)
+    if r.status_code >= 500 or r.status_code == 429:
+        raise BrokerUnavailable(f"Alpaca unavailable ({r.status_code}): {detail}")
+    raise OrderRejected(r.status_code, detail, body=r.text)
+
+
 # ── Trading Client (paper & live) ─────────────────────────────────────────────
 
 _PAPER_HOST = "paper-api.alpaca.markets"
+_LIVE_HOST = "api.alpaca.markets"
+_APPROVED_TRADING_HOSTS = {"paper": _PAPER_HOST, "live": _LIVE_HOST}
 _LIVE_OPT_IN_ENV = "LIVE_TRADING_ENABLED"
 _LIVE_OPT_IN_VALUE = "yes"
+_MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def validate_trading_destination(base_url: str, mode: str) -> str:
+    """Enforce the paper/live boundary at the URL level, not the label.
+
+    The destination must be ``https://`` + EXACTLY the approved Alpaca host
+    for ``mode`` (no userinfo, no port, no path), and when the build is
+    paper-only the mode itself must be ``paper``. Returns the normalized
+    base URL. Raises ``PaperBoundaryViolation`` otherwise.
+    """
+    from urllib.parse import urlsplit
+
+    if mode not in _APPROVED_TRADING_HOSTS:
+        raise PaperBoundaryViolation(f"Unknown trading mode {mode!r}.")
+    if mode != "paper" and trading_mode.paper_only_enabled():
+        raise PaperBoundaryViolation(
+            "This build is paper-only (PAPER_ONLY=true): refusing to construct a "
+            f"{mode!r} trading client."
+        )
+    parts = urlsplit((base_url or "").strip())
+    expected = _APPROVED_TRADING_HOSTS[mode]
+    problems = []
+    if parts.scheme != "https":
+        problems.append(f"scheme must be https (got {parts.scheme or 'none'!r})")
+    if (parts.hostname or "").lower() != expected:
+        problems.append(f"host must be {expected!r} for {mode} mode (got {parts.hostname!r})")
+    if parts.username or parts.password:
+        problems.append("userinfo is not allowed in the trading URL")
+    if parts.port not in (None, 443):
+        problems.append(f"port {parts.port} is not allowed")
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        problems.append("path/query/fragment are not allowed in the trading URL")
+    if problems:
+        raise PaperBoundaryViolation(
+            "Refusing trading destination " + repr(base_url) + ": " + "; ".join(problems)
+        )
+    return f"https://{expected}"
 
 
 def _is_live_mode() -> bool:
@@ -433,14 +533,23 @@ class AlpacaTradingClient:
       - submit_order() re-checks the opt-in on every call.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, transport: httpx.BaseTransport | None = None) -> None:
         # Route through the ``trading_mode`` singleton so runtime mode
         # flips (``/trading/mode``) are reflected on the very next
         # client construction. Falls back to the legacy ``ALPACA_API_KEY``
         # / ``ALPACA_SECRET_KEY`` pair when only that single-mode config
         # is present — see ``trading_mode._credentials_for``.
-        api_key, secret_key, base_url = trading_mode.get_credentials()
         active_mode = trading_mode.get_mode()
+        if settings.demo_mode:
+            # DEMO_MODE: an in-process fake broker (app/fake_broker.py) — no
+            # credentials, no network. Still paper-labelled and still subject
+            # to every boundary check below.
+            from .fake_broker import shared_backend
+            api_key, secret_key = "demo", "demo"
+            base_url = f"https://{_PAPER_HOST}"
+            transport = transport or shared_backend().transport()
+        else:
+            api_key, secret_key, base_url = trading_mode.get_credentials()
         if not api_key or not secret_key:
             raise ValueError(
                 f"Missing Alpaca credentials for {active_mode!r} mode. Set "
@@ -450,13 +559,18 @@ class AlpacaTradingClient:
                 "only mode you use)."
             )
 
+        # Destination boundary: the URL must be the approved host for the
+        # selected mode (a "paper" label pointing at the live host is refused),
+        # and a paper-only build refuses live outright.
+        base_url = validate_trading_destination(base_url, active_mode)
+
         # Refuse to construct a live-trading client unless the user has
         # explicitly opted in via env var. Belt-and-suspenders: even when
         # the UI flips to live, the opt-in must be set so an accidental
         # flip of the persistence file can't execute real orders on its
         # own.
-        if _is_live_mode() and not _live_trading_opted_in():
-            raise RuntimeError(
+        if active_mode == "live" and not _live_trading_opted_in():
+            raise PaperBoundaryViolation(
                 "LIVE trading mode is active but "
                 f"{_LIVE_OPT_IN_ENV}={_LIVE_OPT_IN_VALUE!r} is not set. "
                 "Refusing to initialize trading client. Set "
@@ -472,6 +586,7 @@ class AlpacaTradingClient:
                 "APCA-API-SECRET-KEY": secret_key,
             },
             timeout=15.0,
+            transport=transport,
         )
         # Cache the base_url on the instance so the trade stream can
         # derive its WebSocket URL from the same credentials the client
@@ -497,9 +612,33 @@ class AlpacaTradingClient:
     def __exit__(self, *args):
         self.close()
 
+    def _assert_mutation_allowed(self) -> None:
+        """Re-validated before EVERY mutation (orders, cancels, closes):
+        the client's actual destination must still be the approved host for
+        its mode, the build must allow that mode, and live needs its opt-in.
+        A mid-process env/mode change cannot sneak a mutation through an
+        already-constructed client."""
+        validate_trading_destination(str(self._client.base_url), self._mode)
+        if self._mode == "live" and not _live_trading_opted_in():
+            raise PaperBoundaryViolation(
+                f"Refusing live mutation: set {_LIVE_OPT_IN_ENV}="
+                f"{_LIVE_OPT_IN_VALUE} to enable real-money trading."
+            )
+
     def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        """HTTP request with automatic retry on 429 / 5xx."""
-        return _retry_request(self._client, method, url, **kwargs)
+        """HTTP request with automatic retry on 429 / 5xx (reads only)."""
+        mutating = method.upper() in _MUTATING_METHODS
+        if mutating:
+            self._assert_mutation_allowed()
+        try:
+            return _retry_request(self._client, method, url, **kwargs)
+        except httpx.RequestError as exc:
+            if mutating:
+                raise UncertainOutcome(
+                    f"{method} {url} did not complete ({exc.__class__.__name__}); the "
+                    "broker may have accepted it — reconcile before resubmitting."
+                ) from exc
+            raise BrokerUnavailable(f"{method} {url} failed: {exc}") from exc
 
     # v7.16 (2026-05-13): trading-day calendar fetch. Used by
     # ``app/trading_calendar.py`` for fail-closed scheduler timing
@@ -559,8 +698,8 @@ class AlpacaTradingClient:
         # The autotrade path is already all-or-nothing (use_bracket requires
         # both); this protects the manual /order and /quick-trade endpoints.
         if (take_profit is None) != (stop_loss is None):
-            raise ValueError(
-                "submit_order: take_profit and stop_loss must be provided together "
+            raise InvalidOrderRequest(
+                "take_profit and stop_loss must be provided together "
                 f"(got take_profit={take_profit!r}, stop_loss={stop_loss!r}) — "
                 "a one-sided leg would be silently dropped and the order placed naked"
             )
@@ -571,32 +710,18 @@ class AlpacaTradingClient:
             body["take_profit"] = {"limit_price": str(round(take_profit, 2))}
             body["stop_loss"] = {"stop_price": str(round(stop_loss, 2))}
 
-        # Per-call guard — re-checks opt-in at submission time so a mid-process
-        # env flip can't sneak a live order through an already-constructed client.
-        if _is_live_mode() and not _live_trading_opted_in():
-            logger.error(
-                "order_blocked_live_guard symbol=%s side=%s qty=%s — %s=%s required",
-                symbol, side.value, qty, _LIVE_OPT_IN_ENV, _LIVE_OPT_IN_VALUE,
-            )
-            raise RuntimeError(
-                f"Refusing to submit live order: set {_LIVE_OPT_IN_ENV}="
-                f"{_LIVE_OPT_IN_VALUE} to enable real-money trading."
-            )
-
-        mode = "LIVE" if _is_live_mode() else "paper"
+        # The destination/mode/opt-in boundary is re-checked inside _request
+        # for every mutation (``_assert_mutation_allowed``).
+        mode = "LIVE" if self._mode == "live" else "paper"
         logger.info(
             "order_submit mode=%s symbol=%s side=%s qty=%s type=%s ext_hours=%s",
             mode, symbol, side.value, qty, order_type.value, extended_hours,
         )
         r = self._request("POST", "/v2/orders", json=body)
         if r.status_code >= 400:
-            # Extract Alpaca's rejection reason before raising
-            try:
-                detail = r.json().get("message", r.text)
-            except (json.JSONDecodeError, ValueError, AttributeError):
-                detail = r.text
-            logger.error("order_rejected symbol=%s status=%d reason=%s", symbol, r.status_code, detail)
-            raise ValueError(f"Alpaca rejected order ({r.status_code}): {detail}")
+            logger.error("order_rejected symbol=%s status=%d reason=%s",
+                         symbol, r.status_code, _broker_detail(r))
+            _raise_for_broker_status(r)
         order = r.json()
         logger.info("order_accepted id=%s status=%s", order.get("id"), order.get("status"))
         return order
@@ -709,13 +834,13 @@ class AlpacaTradingClient:
     def cancel_order(self, order_id: str) -> None:
         """Cancel an open order."""
         r = self._request("DELETE", f"/v2/orders/{order_id}")
-        r.raise_for_status()
+        _raise_for_broker_status(r)
         logger.info("order_cancelled id=%s", order_id)
 
     def cancel_all_orders(self) -> None:
         """Cancel every open order."""
         r = self._request("DELETE", "/v2/orders")
-        r.raise_for_status()
+        _raise_for_broker_status(r)
         logger.info("all_orders_cancelled")
 
     # ── Positions ─────────────────────────────────────────────────────────
@@ -737,14 +862,14 @@ class AlpacaTradingClient:
     def close_position(self, symbol: str) -> dict[str, Any]:
         """Close an entire position in a symbol (market sell/cover)."""
         r = self._request("DELETE", f"/v2/positions/{symbol.upper()}")
-        r.raise_for_status()
+        _raise_for_broker_status(r)
         logger.info("position_closed symbol=%s", symbol)
         return r.json()
 
     def close_all_positions(self) -> list[dict[str, Any]]:
         """Liquidate all positions."""
         r = self._request("DELETE", "/v2/positions")
-        r.raise_for_status()
+        _raise_for_broker_status(r)
         logger.info("all_positions_closed")
         return r.json()
 

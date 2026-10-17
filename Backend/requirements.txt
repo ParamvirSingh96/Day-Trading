@@ -1,11 +1,11 @@
-fastapi==0.116.1
+fastapi>=0.118,<1.0
 uvicorn[standard]==0.35.0
 slowapi>=0.1.9,<0.2
 scikit-learn>=1.5,<2.0
 # Pinned for Python 3.14 wheels (older numpy/pandas build from source and fail on 3.14).
 numpy==2.4.4
 pandas==3.0.2
-python-multipart==0.0.20
+python-multipart>=0.0.31,<0.1
 sqlalchemy>=2.0,<2.1
 psycopg[binary]>=3.2,<3.3
 python-dotenv>=1.0,<2.0

@@ -1,6 +1,8 @@
 // ── Chart helpers — TradingView-inspired styling ─────────────────────────────
 // Used by main.js (chart modal, perf chart) and analysis.js (analysis chart).
 
+import { esc } from "./utils.js";
+
 // ── Math helpers ─────────────────────────────────────────────────────────────
 
 export function computeEMA(bars, period) {
@@ -292,7 +294,7 @@ function updateLegendContent(el, bar, vol, symbol) {
 
   el.innerHTML = `
     <div class="leg-row leg-row-main">
-      <span class="leg-symbol">${symbol || ""}</span>
+      <span class="leg-symbol">${esc(symbol || "")}</span>
       <span class="leg-indicator"><span class="leg-dot" style="background:${EMA_FAST_COLOR}"></span>EMA 9</span>
       <span class="leg-indicator"><span class="leg-dot" style="background:${EMA_SLOW_COLOR}"></span>EMA 20</span>
     </div>

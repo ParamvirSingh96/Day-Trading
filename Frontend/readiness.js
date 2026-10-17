@@ -27,6 +27,7 @@
 // =============================================================================
 
 import { API_BASE_URL } from "./config.js";
+import { esc } from "./utils.js";
 import { playSound, sendBrowserNotification } from "./notifications.js";
 
 const POLL_INTERVAL_MS = 30_000;     // every 30s
@@ -166,7 +167,7 @@ function _renderSoftError(msg) {
   _setClasses("warn");
   els.banner.classList.remove("readiness-banner-hidden");
   els.icon.textContent = "⚠";
-  els.text.innerHTML = `<strong>Readiness check error:</strong> ${_esc(msg)}`;
+  els.text.innerHTML = `<strong>Readiness check error:</strong> ${esc(msg)}`;
   els.actions.innerHTML = "";
 }
 
@@ -198,7 +199,7 @@ function _renderState(state) {
   els.banner.classList.remove("readiness-banner-hidden");
 
   els.icon.textContent = _iconFor(severity);
-  els.text.innerHTML = _esc(message);
+  els.text.innerHTML = esc(message);
 
   // CTA buttons
   els.actions.innerHTML = "";
@@ -354,9 +355,3 @@ function _titleFor(s) {
   return s === "blocking" ? "AI Trading is OFF" : "Trading window approaching";
 }
 
-function _esc(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}

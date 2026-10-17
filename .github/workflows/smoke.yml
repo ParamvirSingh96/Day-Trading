@@ -7,7 +7,7 @@ on:
 
 jobs:
   smoke:
-    name: Import check + smoke suites
+    name: Import check + tests + smoke suites
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -19,15 +19,28 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
-          cache-dependency-path: Backend/requirements.txt
+          cache-dependency-path: |
+            Backend/requirements.lock
+            Backend/requirements-dev.txt
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install dependencies (locked)
+        run: |
+          pip install -r requirements.txt -c requirements.lock
+          pip install -r requirements-dev.txt
 
       - name: Import the application
+        env:
+          TRADEHACK_SKIP_DOTENV: "1"
+          DEMO_MODE: "true"
         run: python -c "import app.main; print('routes:', len(app.main.app.routes))"
 
+      - name: Regression tests (pytest)
+        working-directory: ${{ github.workspace }}
+        run: python -m pytest tests -q
+
       - name: Smoke suites
+        env:
+          TRADEHACK_SKIP_DOTENV: "1"
         run: |
           set -euo pipefail
           for s in smoke_close_lifecycle smoke_close_recovery smoke_entry_guards \
@@ -36,3 +49,19 @@ jobs:
             python -m scripts.$s
             echo "::endgroup::"
           done
+
+  audit:
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: pip-audit (locked runtime dependencies)
+        run: |
+          pip install -r requirements-dev.txt
+          pip-audit -r requirements.lock --progress-spinner off

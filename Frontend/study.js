@@ -25,10 +25,6 @@ export async function loadStudyInsights() {
   }
 }
 
-function escapeStudyText(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 function renderStudyByStock(insights) {
   if (!studyByStockEl) return;
   if (!insights.length) {
@@ -88,7 +84,7 @@ function renderStudyByStock(insights) {
     const groupsHtml = setupGroups.map((g) => {
       const isCommon = g.count >= 2;
       const countBadge = isCommon
-        ? `<span class="lesson-group-badge hot" title="Seen ${g.count}x">⚡ ${g.count}×</span>`
+        ? `<span class="lesson-group-badge hot" title="Seen ${esc(g.count)}x">⚡ ${esc(g.count)}×</span>`
         : "";
       const latest = g.items.slice().sort((a, b) =>
         new Date(b.created_at || b.study_date || 0) - new Date(a.created_at || a.study_date || 0)
@@ -110,7 +106,7 @@ function renderStudyByStock(insights) {
           const metaParts = [entryStr, stopStr, targetStr, pnlStr].filter(Boolean);
           const count = i.occurrence_count || 1;
           const repeatBadge = count > 1
-            ? `<span class="study-insight-repeat${count >= 3 ? ' hot' : ''}" title="Seen ${count}x across study sessions">⚡ ${count}x</span>`
+            ? `<span class="study-insight-repeat${count >= 3 ? ' hot' : ''}" title="Seen ${esc(count)}x across study sessions">⚡ ${esc(count)}x</span>`
             : "";
           const when = i.study_date
             ? new Date(i.study_date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
@@ -130,7 +126,7 @@ function renderStudyByStock(insights) {
                 ${confStr ? `<span>${confStr}</span>` : ""}
                 ${repeatBadge}
               </div>
-              <div class="lesson-card-body">${escapeStudyText(i.insight || "")}</div>
+              <div class="lesson-card-body">${esc(i.insight || "")}</div>
               ${metaParts.length ? `<div class="study-insight-meta">${metaParts.map(p => `<span>${esc(p)}</span>`).join("")}</div>` : ""}
               ${tagChips ? `<div class="lesson-card-tags">${tagChips}</div>` : ""}
             </div>`;
@@ -159,7 +155,7 @@ function renderStudyByStock(insights) {
         <div class="stock-group-header collapsible-toggle">
           <span class="collapsible-chevron">▾</span>
           <span class="stock-group-symbol">${esc(sym)}</span>
-          <span class="stock-group-count">${countLabel}</span>
+          <span class="stock-group-count">${esc(countLabel)}</span>
           <span class="muted-copy stock-group-range">${dateRange}</span>
         </div>
         <div class="collapsible-content">

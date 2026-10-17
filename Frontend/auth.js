@@ -115,7 +115,9 @@ if (registerForm) {
     } catch (error) {
       const message = error.message.includes("already exists")
         ? "That email is already registered. Try logging in instead."
-        : error.message;
+        : error.message.includes("Registration is closed")
+          ? "Registration is closed on this instance — ask the operator to add your email to OPERATOR_EMAILS."
+          : error.message;
       setStatus(status, message, "error");
     } finally {
       submitButton.disabled = false;

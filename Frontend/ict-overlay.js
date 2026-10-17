@@ -15,6 +15,7 @@
 // returned object so the caller owns the lifecycle.
 
 import { API_BASE_URL } from "./config.js";
+import { esc } from "./utils.js";
 
 const LS = LightweightCharts.LineStyle;
 
@@ -251,7 +252,7 @@ export function renderICTPills(container, data) {
               :                                 "ict-pill-equil";
     const pct = data.pd_pct != null ? ` · ${Math.round(data.pd_pct * 100)}%` : "";
     const cap = data.pd_zone[0].toUpperCase() + data.pd_zone.slice(1);
-    pills.push(`<span class="ict-pill ${cls}">${cap}${pct}</span>`);
+    pills.push(`<span class="ict-pill ${cls}">${esc(cap)}${pct}</span>`);
   }
 
   // OTE flags — only show when active so the row doesn't carry dead weight.
@@ -265,15 +266,15 @@ export function renderICTPills(container, data) {
   // Recent event context — last sweep/MSS with bars_ago for sense of freshness.
   if (data.last_sweep && data.last_sweep.bars_ago != null) {
     const s = data.last_sweep;
-    const age = s.bars_ago === 0 ? "now" : `${s.bars_ago}m ago`;
+    const age = s.bars_ago === 0 ? "now" : `${esc(s.bars_ago)}m ago`;
     const arrow = s.direction === "bullish" ? "↑" : "↓";
     pills.push(
-      `<span class="ict-pill ict-pill-event">Sweep ${arrow} ${s.level_name} · ${age}</span>`
+      `<span class="ict-pill ict-pill-event">Sweep ${arrow} ${esc(s.level_name)} · ${age}</span>`
     );
   }
   if (data.last_mss && data.last_mss.bars_ago != null) {
     const m = data.last_mss;
-    const age = m.bars_ago === 0 ? "now" : `${m.bars_ago}m ago`;
+    const age = m.bars_ago === 0 ? "now" : `${esc(m.bars_ago)}m ago`;
     const arrow = m.direction === "bullish" ? "↑" : "↓";
     pills.push(
       `<span class="ict-pill ict-pill-event">MSS ${arrow} · ${age}</span>`

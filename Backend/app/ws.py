@@ -1,5 +1,5 @@
 """
-WebSocket hub — pushes real-time events to all connected browser clients.
+WebSocket hub — pushes real-time events to connected operator browsers.
 ==========================================================================
 Event types:
   autotrade_status   Full autotrade status snapshot (replaces 5s polling)
@@ -8,12 +8,16 @@ Event types:
   monitor_event      Position monitor updates (trailing stop moved, position closed)
   wallet_update      Account/position change signal (tells frontend to refresh)
 
-Connection flow:
-  1. Client opens ws://.../ws
-  2. Server authenticates via the session cookie sent during upgrade
-  3. Server adds client to the broadcast set
-  4. Backend emits events via broadcast() — all clients receive them
-  5. Client can send {"type": "ping"} to keep alive; server responds {"type": "pong"}
+Connection flow (2026-10 hardening):
+  1. Client opens ws://.../ws — the Origin header must be one of the
+     configured CORS origins (close 4003 otherwise).
+  2. Server validates the session cookie: it must belong to an OPERATOR with
+     an unexpired session (close 4001 otherwise).
+  3. The socket is registered against its session token hash + user id.
+  4. The session is re-validated on every inbound message and at least every
+     WS_REVALIDATE_SECONDS; logout / re-login close the bound sockets
+     immediately (``revoke_session_sockets`` / ``revoke_user_sockets``).
+  5. Client can send {"type": "ping"}; server responds {"type": "pong"}.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 from typing import Any
@@ -30,37 +35,50 @@ from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from .db import SessionLocal
-from .models import UserSession
+from .models import User, UserSession
 from .settings import settings
 
 logger = logging.getLogger("tradehack.ws")
+
+WS_REVALIDATE_SECONDS = 30.0
+CLOSE_AUTH_REQUIRED = 4001
+CLOSE_ORIGIN_DENIED = 4003
+
+
+@dataclass
+class _Conn:
+    ws: WebSocket
+    user_id: int
+    token_hash: str
 
 
 class ConnectionManager:
     """Manages active WebSocket connections and broadcasts events."""
 
     def __init__(self):
-        self._connections: set[WebSocket] = set()
+        self._conns: dict[WebSocket, _Conn] = {}
         self._lock = asyncio.Lock()
+        self.loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def client_count(self) -> int:
-        return len(self._connections)
+        return len(self._conns)
 
-    async def connect(self, ws: WebSocket):
+    async def connect(self, ws: WebSocket, user_id: int, token_hash: str):
         await ws.accept()
+        self.loop = asyncio.get_running_loop()
         async with self._lock:
-            self._connections.add(ws)
+            self._conns[ws] = _Conn(ws=ws, user_id=user_id, token_hash=token_hash)
         logger.info("ws_connected clients=%d", self.client_count)
 
     async def disconnect(self, ws: WebSocket):
         async with self._lock:
-            self._connections.discard(ws)
+            self._conns.pop(ws, None)
         logger.info("ws_disconnected clients=%d", self.client_count)
 
     async def broadcast(self, event_type: str, data: Any = None):
         """Send an event to ALL connected clients — in parallel."""
-        if not self._connections:
+        if not self._conns:
             return
 
         payload = json.dumps(
@@ -68,11 +86,8 @@ class ConnectionManager:
             default=str,
         )
 
-        # Snapshot the socket set under the lock, then fire sends concurrently
-        # outside the lock so one slow client can't stall the rest.
         async with self._lock:
-            targets = list(self._connections)
-
+            targets = list(self._conns)
         if not targets:
             return
 
@@ -80,91 +95,156 @@ class ConnectionManager:
             *(ws.send_text(payload) for ws in targets),
             return_exceptions=True,
         )
-
         dead = [ws for ws, r in zip(targets, results) if isinstance(r, BaseException)]
         if dead:
             async with self._lock:
                 for ws in dead:
-                    self._connections.discard(ws)
+                    self._conns.pop(ws, None)
             logger.debug("ws_broadcast_pruned_dead count=%d", len(dead))
 
     async def send_personal(self, ws: WebSocket, event_type: str, data: Any = None):
-        """Send an event to a single client."""
         payload = json.dumps(
             {"type": event_type, "data": data, "ts": datetime.now(timezone.utc).isoformat()},
             default=str,
         )
         await ws.send_text(payload)
 
+    async def close_matching(self, *, token_hash: str | None = None,
+                             user_id: int | None = None,
+                             code: int = CLOSE_AUTH_REQUIRED,
+                             reason: str = "Session revoked") -> int:
+        """Close every socket bound to the given session or user."""
+        async with self._lock:
+            victims = [c for c in self._conns.values()
+                       if (token_hash is not None and c.token_hash == token_hash)
+                       or (user_id is not None and c.user_id == user_id)]
+            for c in victims:
+                self._conns.pop(c.ws, None)
+        for c in victims:
+            try:
+                await c.ws.close(code=code, reason=reason)
+            except Exception:
+                pass
+        if victims:
+            logger.info("ws_revoked count=%d reason=%s", len(victims), reason)
+        return len(victims)
+
 
 # Global singleton
 manager = ConnectionManager()
 
 
-def _authenticate_ws(ws: WebSocket) -> bool:
-    """Validate the session cookie from the WebSocket upgrade request."""
-    cookie_header = ws.headers.get("cookie", "")
-    if not cookie_header:
-        return False
-
-    cookies = SimpleCookie()
+def _run_on_loop(coro) -> None:
+    """Schedule a coroutine on the hub's loop from sync route handlers
+    (which FastAPI runs in a worker thread) or from async code."""
     try:
-        cookies.load(cookie_header)
-    except Exception:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is not None and running is manager.loop:
+        running.create_task(coro)
+        return
+    if manager.loop is not None and manager.loop.is_running():
+        asyncio.run_coroutine_threadsafe(coro, manager.loop)
+        return
+    coro.close()  # no hub loop yet (tests / no clients) — nothing to revoke
+
+
+def revoke_session_sockets(token_hash: str) -> None:
+    _run_on_loop(manager.close_matching(token_hash=token_hash, reason="Logged out"))
+
+
+def revoke_user_sockets(user_id: int) -> None:
+    _run_on_loop(manager.close_matching(user_id=user_id, reason="Session superseded"))
+
+
+# ── Handshake checks ─────────────────────────────────────────────────────────
+
+def _origin_allowed(ws: WebSocket) -> bool:
+    """Browsers always send Origin on a WebSocket upgrade; it must be one of
+    the configured frontend origins (same allow-list as CORS)."""
+    origin = (ws.headers.get("origin") or "").strip().rstrip("/")
+    if not origin:
         return False
+    allowed = {o.strip().rstrip("/") for o in settings.cors_origins}
+    return origin in allowed
 
-    morsel = cookies.get(settings.session_cookie_name)
-    if not morsel:
-        return False
 
-    raw_token = morsel.value
-    if not raw_token:
-        return False
-
-    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-
+def _session_lookup(token_hash: str) -> tuple[int, str] | None:
+    """Return ``(user_id, token_hash)`` for a valid OPERATOR session, else None."""
     db = SessionLocal()
     try:
-        session = db.scalar(
-            select(UserSession).where(UserSession.token_hash == token_hash)
-        )
+        session = db.scalar(select(UserSession).where(UserSession.token_hash == token_hash))
         if not session:
-            return False
-
+            return None
         expires_at = session.expires_at
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if expires_at <= datetime.now(timezone.utc):
-            return False
-
-        return True
-    except Exception:
-        return False
+            return None
+        user = db.get(User, session.user_id)
+        if not user or not user.is_operator:
+            return None
+        return user.id, token_hash
+    except Exception as exc:
+        logger.debug("ws_session_lookup_error error=%s", exc)
+        return None
     finally:
         db.close()
 
 
+def _token_hash_from_cookie(ws: WebSocket) -> str | None:
+    cookie_header = ws.headers.get("cookie", "")
+    if not cookie_header:
+        return None
+    cookies = SimpleCookie()
+    try:
+        cookies.load(cookie_header)
+    except Exception:
+        return None
+    morsel = cookies.get(settings.session_cookie_name)
+    if not morsel or not morsel.value:
+        return None
+    return hashlib.sha256(morsel.value.encode("utf-8")).hexdigest()
+
+
 async def websocket_endpoint(ws: WebSocket):
-    """Main WebSocket handler — authenticate, accept, listen for pings."""
-    # Authenticate before accepting
-    if not _authenticate_ws(ws):
-        await ws.close(code=4001, reason="Authentication required")
+    """Main WebSocket handler — check origin, authenticate an operator,
+    accept, then keep re-validating the session for the socket's lifetime."""
+    if not _origin_allowed(ws):
+        await ws.close(code=CLOSE_ORIGIN_DENIED, reason="Origin not allowed")
         return
 
-    await manager.connect(ws)
+    token_hash = _token_hash_from_cookie(ws)
+    ident = _session_lookup(token_hash) if token_hash else None
+    if ident is None:
+        await ws.close(code=CLOSE_AUTH_REQUIRED, reason="Authentication required")
+        return
+    user_id, token_hash = ident
+
+    await manager.connect(ws, user_id=user_id, token_hash=token_hash)
     try:
         while True:
-            raw = await ws.receive_text()
+            try:
+                raw = await asyncio.wait_for(ws.receive_text(), timeout=WS_REVALIDATE_SECONDS)
+            except asyncio.TimeoutError:
+                raw = None
+
+            # Re-validate on every message AND on every idle interval: an
+            # expired or logged-out session must not keep receiving the feed.
+            if _session_lookup(token_hash) is None:
+                await manager.disconnect(ws)
+                await ws.close(code=CLOSE_AUTH_REQUIRED, reason="Session expired")
+                return
+            if raw is None:
+                continue
+
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-
-            msg_type = msg.get("type", "")
-
-            if msg_type == "ping":
+            if msg.get("type") == "ping":
                 await manager.send_personal(ws, "pong")
-            # Future: handle client-initiated messages here
     except WebSocketDisconnect:
         pass
     except Exception as exc:

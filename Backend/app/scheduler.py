@@ -595,6 +595,9 @@ async def _run_auto_start() -> None:
     if user is None:
         _refuse(f"no user with email={operator_email!r} in DB")
         return
+    if not getattr(user, "is_operator", False):
+        _refuse(f"SCHEDULER_USER_EMAIL account is not an operator (user_id={user.id})")
+        return
 
     # All preconditions passed.
     try:

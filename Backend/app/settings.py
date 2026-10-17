@@ -7,7 +7,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env", override=True)
+# Tests set TRADEHACK_SKIP_DOTENV=1 so a developer's real .env can never leak
+# into (or be overridden by) a test run.
+if os.getenv("TRADEHACK_SKIP_DOTENV", "").lower() not in ("1", "true"):
+    load_dotenv(BASE_DIR / ".env", override=True)
 
 
 def _split_csv(value: str) -> list[str]:
@@ -32,6 +35,22 @@ class Settings:
     models_dir: str
     anthropic_api_key: str
     openai_api_key: str
+    # Security boundaries (2026-10 hardening pass):
+    #   paper_only       — True (default): the broker client refuses to be
+    #                      constructed for, or send a mutation to, anything but
+    #                      the exact Alpaca paper host. Live trading requires
+    #                      PAPER_ONLY=false AND the pre-existing opt-ins.
+    #   registration_mode— "closed" (default): only the bootstrap account
+    #                      (first user on an empty DB) or OPERATOR_EMAILS may
+    #                      register. "open": anyone may register, but only
+    #                      operators reach account/trading controls.
+    #   operator_emails  — accounts granted operator access on register/login.
+    #   demo_mode        — serve synthetic market data + an in-memory broker
+    #                      (app/fake_broker.py) so the app runs with no keys.
+    paper_only: bool
+    registration_mode: str
+    operator_emails: list[str]
+    demo_mode: bool
     # v7.12.1 (2026-05-01): Layer 2 (Sonnet AI confidence gate + Haiku
     # pre-screen) on/off switch. When False, the autotrade loop trades
     # Layer-1 predicate matches alone — no Sonnet analyze_chart call,
@@ -296,6 +315,13 @@ def get_settings() -> Settings:
         models_dir=models_dir,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        paper_only=os.getenv("PAPER_ONLY", "true").strip().lower() != "false",
+        registration_mode=(
+            "open" if os.getenv("REGISTRATION_MODE", "closed").strip().lower() == "open"
+            else "closed"
+        ),
+        operator_emails=[e.lower() for e in _split_csv(os.getenv("OPERATOR_EMAILS", ""))],
+        demo_mode=os.getenv("DEMO_MODE", "false").strip().lower() == "true",
         # v7.12.1: Layer-2 AI gate. Default False in Dev (per .env);
         # the autotrade loop runs predicate-only when this is off. Flip
         # to ENABLE_AI_GATE=true to restore Sonnet + Haiku screening.

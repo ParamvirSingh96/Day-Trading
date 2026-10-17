@@ -17,6 +17,7 @@ class LoginRequest(BaseModel):
 
 
 class AuthUser(BaseModel):
+    is_operator: bool = False
     name: str
     email: str
 

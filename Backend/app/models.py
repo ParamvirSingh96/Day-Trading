@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -22,6 +22,9 @@ class User(Base):
     password_salt: Mapped[str] = mapped_column(String(255))
     password_hash: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # Operator boundary: only operator accounts may reach the shared broker
+    # account (orders, positions, autotrade, trading mode, WebSocket feed).
+    is_operator: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # When set, performance stats only consider trades opened on/after this timestamp.
     # Trade history is NOT affected — prior trades remain visible in the history list.

@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "./config.js";
+import { esc } from "./utils.js";
 import { CANDLE_UP, CANDLE_DOWN } from "./chart-helpers.js";
 
 /** Shared options for small dashboard charts. */
@@ -215,9 +216,9 @@ function renderBreakdownTable(wrap, data, labelHeader) {
   for (const [key, s] of entries) {
     const pnlCls = colorClass(s.pnl);
     html += `<tr>
-      <td class="dash-table-key">${key}</td>
-      <td>${s.trades}</td>
-      <td>${s.wins}</td>
+      <td class="dash-table-key">${esc(key)}</td>
+      <td>${esc(s.trades)}</td>
+      <td>${esc(s.wins)}</td>
       <td>${fmtPct(s.win_rate)}</td>
       <td class="${pnlCls}">${fmtUSD(s.pnl)}</td>
     </tr>`;
@@ -238,11 +239,11 @@ function renderBestWorst(d) {
     return `
       <div class="dash-bw-card ${cls}">
         <span class="dash-bw-label">${label}</span>
-        <div class="dash-bw-symbol">${t.symbol}</div>
+        <div class="dash-bw-symbol">${esc(t.symbol)}</div>
         <div class="dash-bw-pnl ${colorClass(t.pnl)}">${fmtUSD(t.pnl)} (${t.pnl_pct != null ? t.pnl_pct.toFixed(2) + "%" : "—"})</div>
-        <div class="muted-copy">${t.setup}</div>
-        <div class="muted-copy">${t.direction} · ${fmtDuration(t.hold_duration_seconds)} · ${fmtTime(t.opened_at)}</div>
-        ${t.reasoning ? `<div class="dash-bw-reasoning muted-copy">"${t.reasoning.substring(0, 150)}${t.reasoning.length > 150 ? "…" : ""}"</div>` : ""}
+        <div class="muted-copy">${esc(t.setup)}</div>
+        <div class="muted-copy">${esc(t.direction)} · ${fmtDuration(t.hold_duration_seconds)} · ${fmtTime(t.opened_at)}</div>
+        ${t.reasoning ? `<div class="dash-bw-reasoning muted-copy">"${esc(t.reasoning.substring(0, 150))}${t.reasoning.length > 150 ? "…" : ""}"</div>` : ""}
       </div>`;
   }
 
@@ -273,7 +274,7 @@ function renderTradeLog(trades) {
   const outcomeBadge = (cls) => {
     if (!cls) return "";
     const label = outcomeLabel[cls] || cls;
-    return `<span class="outcome-badge ${cls}">${label}</span>`;
+    return `<span class="outcome-badge ${esc(cls)}">${esc(label)}</span>`;
   };
 
   // Structured probabilities (#10) — tooltip-only on the confidence cell so
@@ -298,16 +299,16 @@ function renderTradeLog(trades) {
     const pnlCls = colorClass(t.pnl);
     html += `<tr>
       <td class="muted-copy">${fmtTime(t.opened_at)}</td>
-      <td class="dash-table-key">${t.symbol}</td>
-      <td>${t.direction}</td>
-      <td class="muted-copy" title="${t.setup || ""}">${(t.setup || "—").substring(0, 30)}</td>
+      <td class="dash-table-key">${esc(t.symbol)}</td>
+      <td>${esc(t.direction)}</td>
+      <td class="muted-copy" title="${esc(t.setup || "")}">${esc((t.setup || "—").substring(0, 30))}</td>
       <td ${probTitle(t)}>${t.confidence != null ? (t.confidence * 100).toFixed(0) + "%" : "—"}</td>
       <td>${t.entry_price != null ? "$" + t.entry_price.toFixed(2) : "—"}</td>
       <td>${t.exit_price != null ? "$" + t.exit_price.toFixed(2) : "—"}</td>
       <td class="${pnlCls}">${t.pnl != null ? fmtUSD(t.pnl) : "—"}</td>
       <td class="${t.r_multiple != null ? colorClass(t.r_multiple) : ""}">${t.r_multiple != null ? t.r_multiple.toFixed(2) + "R" : "—"}</td>
       <td class="muted-copy">${fmtDuration(t.hold_duration_seconds)}</td>
-      <td class="muted-copy">${t.exit_reason || t.status || "—"}</td>
+      <td class="muted-copy">${esc(t.exit_reason || t.status || "—")}</td>
       <td>${outcomeBadge(t.outcome_class)}</td>
     </tr>`;
   }
@@ -382,16 +383,16 @@ async function loadLessons() {
     for (const l of data.lessons) {
       html += `<tr>
         <td class="muted-copy">${fmtTime(l.created_at)}</td>
-        <td class="dash-table-key">${l.symbol}</td>
-        <td class="muted-copy">${(l.setup || "—").substring(0, 30)}</td>
+        <td class="dash-table-key">${esc(l.symbol)}</td>
+        <td class="muted-copy">${esc((l.setup || "—").substring(0, 30))}</td>
         <td class="negative">${fmtUSD(l.pnl)}</td>
-        <td>${l.lesson}</td>
+        <td>${esc(l.lesson)}</td>
       </tr>`;
     }
     html += `</tbody></table>`;
     lessonsWrap.innerHTML = html;
   } catch (err) {
-    lessonsWrap.innerHTML = `<p class="muted-copy">Could not load lessons — ${err.message}</p>`;
+    lessonsWrap.innerHTML = `<p class="muted-copy">Could not load lessons — ${esc(err.message)}</p>`;
   }
 }
 
@@ -422,7 +423,7 @@ async function loadDashboard() {
     renderTradeLog(hist.trades);
   } catch (err) {
     console.error("Dashboard load error:", err);
-    pnlChartWrap.innerHTML = `<p class="muted-copy">Failed to load — ${err.message}</p>`;
+    pnlChartWrap.innerHTML = `<p class="muted-copy">Failed to load — ${esc(err.message)}</p>`;
   } finally {
     if (dashRefreshBtn) dashRefreshBtn.disabled = false;
   }
@@ -544,16 +545,16 @@ function renderSimStats(d) {
     const pct = (n) => ((n / total) * 100).toFixed(1);
     simApprovalBreak.innerHTML = `
       <div class="sim-approval-bar">
-        <div class="sim-bar-segment sim-bar-approved" style="width:${pct(d.approved_count)}%" title="Approved: ${d.approved_count}"></div>
-        <div class="sim-bar-segment sim-bar-rejected" style="width:${pct(d.rejected_count)}%" title="Rejected: ${d.rejected_count}"></div>
-        <div class="sim-bar-segment sim-bar-expired" style="width:${pct(d.expired_count)}%" title="Expired: ${d.expired_count}"></div>
-        <div class="sim-bar-segment sim-bar-pending" style="width:${pct(d.unapproved_count + d.open_trades)}%" title="Open/Pending: ${d.unapproved_count + d.open_trades}"></div>
+        <div class="sim-bar-segment sim-bar-approved" style="width:${pct(d.approved_count)}%" title="Approved: ${esc(d.approved_count)}"></div>
+        <div class="sim-bar-segment sim-bar-rejected" style="width:${pct(d.rejected_count)}%" title="Rejected: ${esc(d.rejected_count)}"></div>
+        <div class="sim-bar-segment sim-bar-expired" style="width:${pct(d.expired_count)}%" title="Expired: ${esc(d.expired_count)}"></div>
+        <div class="sim-bar-segment sim-bar-pending" style="width:${pct(d.unapproved_count + d.open_trades)}%" title="Open/Pending: ${esc(d.unapproved_count + d.open_trades)}"></div>
       </div>
       <div class="sim-approval-legend">
-        <span class="sim-legend-item"><span class="sim-dot sim-bar-approved"></span> Approved ${d.approved_count}</span>
-        <span class="sim-legend-item"><span class="sim-dot sim-bar-rejected"></span> Rejected ${d.rejected_count}</span>
-        <span class="sim-legend-item"><span class="sim-dot sim-bar-expired"></span> Expired ${d.expired_count}</span>
-        <span class="sim-legend-item"><span class="sim-dot sim-bar-pending"></span> Pending ${d.unapproved_count}</span>
+        <span class="sim-legend-item"><span class="sim-dot sim-bar-approved"></span> Approved ${esc(d.approved_count)}</span>
+        <span class="sim-legend-item"><span class="sim-dot sim-bar-rejected"></span> Rejected ${esc(d.rejected_count)}</span>
+        <span class="sim-legend-item"><span class="sim-dot sim-bar-expired"></span> Expired ${esc(d.expired_count)}</span>
+        <span class="sim-legend-item"><span class="sim-dot sim-bar-pending"></span> Pending ${esc(d.unapproved_count)}</span>
       </div>`;
   }
 }
@@ -625,9 +626,9 @@ function renderSimTrades(trades) {
 
     html += `<tr>
       <td class="muted-copy">${fmtTime(t.opened_at)}</td>
-      <td class="dash-table-key">${t.symbol}</td>
-      <td>${t.direction}</td>
-      <td class="muted-copy" title="${t.setup || ""}">${(t.setup || "—").substring(0, 25)}</td>
+      <td class="dash-table-key">${esc(t.symbol)}</td>
+      <td>${esc(t.direction)}</td>
+      <td class="muted-copy" title="${esc(t.setup || "")}">${esc((t.setup || "—").substring(0, 25))}</td>
       <td>${t.confidence != null ? (t.confidence * 100).toFixed(0) + "%" : "—"}</td>
       <td>$${t.entry_price?.toFixed(2) || "—"}</td>
       <td>${t.exit_price != null ? "$" + t.exit_price.toFixed(2) : "—"}</td>
@@ -659,7 +660,7 @@ async function loadSimulator() {
     renderSimTrades(trades.trades);
   } catch (err) {
     console.error("Simulator load error:", err);
-    if (simChartWrap) simChartWrap.innerHTML = `<p class="muted-copy">Could not load simulator data — ${err.message}</p>`;
+    if (simChartWrap) simChartWrap.innerHTML = `<p class="muted-copy">Could not load simulator data — ${esc(err.message)}</p>`;
   }
 }
 

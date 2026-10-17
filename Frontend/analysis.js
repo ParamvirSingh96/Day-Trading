@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "./config.js";
+import { esc } from "./utils.js";
 import {
   createEnhancedChart, addCandleSeries, addVolumeSeries,
   addEMAOverlays, addCurrentPriceLine, setupLegend, setupZoomControls,
@@ -191,15 +192,15 @@ function renderAnalysis(d) {
     const dirCls = s.direction === "long" ? "strat-long"
                 : s.direction === "short" ? "strat-short" : "";
     const tier = (s.tier || "B");
-    const tierCls = `strat-tier-${tier.toLowerCase()}`;
+    const tierCls = `strat-tier-${esc(tier.toLowerCase())}`;
     const scoreStr = (typeof s.score === "number") ? ` · ${Math.round(s.score)}` : "";
     const reasonsTitle = (s.reasons && s.reasons.length)
       ? s.reasons.join("\n")
       : "";
     const titleAttr = reasonsTitle
-      ? ` title="${reasonsTitle.replace(/"/g, "&quot;")}"`
+      ? ` title="${esc(reasonsTitle)}"`
       : "";
-    return `<span class="strat-chip ${dirCls}"${titleAttr}><strong>${s.name}</strong><span class="strat-tier ${tierCls}">${tier.toUpperCase()}</span>${scoreStr}</span>`;
+    return `<span class="strat-chip ${dirCls}"${titleAttr}><strong>${esc(s.name)}</strong><span class="strat-tier ${tierCls}">${esc(tier.toUpperCase())}</span>${scoreStr}</span>`;
   };
 
   const stratEl = document.getElementById("matched-strategies");
@@ -237,14 +238,14 @@ function renderAnalysis(d) {
         const stage = s.stage || "forming";
         const stageLabel = stage === "sweep_only" ? "sweep only"
                          : stage === "sweep_and_mss" ? "sweep + MSS"
-                         : stage;
+                         : esc(stage);
         const missing = (s.missing || []).join(" + ");
-        const waitingFor = missing ? `Waiting for: ${missing}` : "";
+        const waitingFor = missing ? `Waiting for: ${esc(missing)}` : "";
         const tooltip = (s.structural_notes || []).join("\n");
-        const titleAttr = tooltip ? ` title="${tooltip.replace(/"/g, "&quot;")}"` : "";
+        const titleAttr = tooltip ? ` title="${esc(tooltip)}"` : "";
         return `<span class="strat-chip strat-chip-forming ${dirCls}"${titleAttr}>` +
                `<span class="forming-icon">⏳</span>` +
-               `<strong>${s.name}</strong>` +
+               `<strong>${esc(s.name)}</strong>` +
                `<span class="forming-stage">${stageLabel}</span>` +
                (waitingFor ? `<span class="forming-waiting">${waitingFor}</span>` : "") +
                `</span>`;
@@ -288,11 +289,11 @@ function renderAnalysis(d) {
     const ctxOnly = matches.filter((s) => s.tier === "context");
     if (aGrade.length > 0) {
       const top = aGrade.sort((a, b) => (b.score || 0) - (a.score || 0))[0];
-      headerEl.innerHTML = `<strong>Top setup:</strong> ${top.name} <span class="strat-tier strat-tier-a">A</span> · score ${Math.round(top.score || 0)}`;
+      headerEl.innerHTML = `<strong>Top setup:</strong> ${esc(top.name)} <span class="strat-tier strat-tier-a">A</span> · score ${Math.round(top.score || 0)}`;
       headerEl.classList.remove("hidden");
     } else if (bGrade.length > 0) {
       const top = bGrade.sort((a, b) => (b.score || 0) - (a.score || 0))[0];
-      headerEl.innerHTML = `<em>No A-grade setup. Best available is <strong>${top.name}</strong> <span class="strat-tier strat-tier-b">B</span> — trade with extra confirmation.</em>`;
+      headerEl.innerHTML = `<em>No A-grade setup. Best available is <strong>${esc(top.name)}</strong> <span class="strat-tier strat-tier-b">B</span> — trade with extra confirmation.</em>`;
       headerEl.classList.remove("hidden");
     } else if (ctxOnly.length > 0) {
       headerEl.innerHTML = `<em>Context-only structure detected. Wait for a primary signal.</em>`;
@@ -306,20 +307,20 @@ function renderAnalysis(d) {
   const rsiZone  = ind.rsi  > 70 ? "overbought" : ind.rsi < 30 ? "oversold" : "neutral";
   const macdSide = ind.macd > ind.macd_signal ? "bullish" : "bearish";
   document.getElementById("analysis-indicators").innerHTML = `
-    <div class="ind-chip">EMA9 <strong>$${ind.ema9}</strong></div>
-    <div class="ind-chip">EMA20 <strong>$${ind.ema20}</strong></div>
-    <div class="ind-chip rsi-${rsiZone}">RSI <strong>${ind.rsi}</strong></div>
-    <div class="ind-chip">VWAP <strong>$${ind.vwap}</strong></div>
+    <div class="ind-chip">EMA9 <strong>$${esc(ind.ema9)}</strong></div>
+    <div class="ind-chip">EMA20 <strong>$${esc(ind.ema20)}</strong></div>
+    <div class="ind-chip rsi-${rsiZone}">RSI <strong>${esc(ind.rsi)}</strong></div>
+    <div class="ind-chip">VWAP <strong>$${esc(ind.vwap)}</strong></div>
     <div class="ind-chip ind-chip-${macdSide}">MACD <strong>${ind.macd > 0 ? "+" : ""}${Number(ind.macd).toFixed(3)}</strong></div>
-    <div class="ind-chip">ATR <strong>$${ind.atr}</strong></div>
-    <div class="ind-chip">High <strong>$${ind.session_high}</strong></div>
-    <div class="ind-chip">Low <strong>$${ind.session_low}</strong></div>`;
+    <div class="ind-chip">ATR <strong>$${esc(ind.atr)}</strong></div>
+    <div class="ind-chip">High <strong>$${esc(ind.session_high)}</strong></div>
+    <div class="ind-chip">Low <strong>$${esc(ind.session_low)}</strong></div>`;
 
   // Key levels
   document.getElementById("analysis-levels").innerHTML = `
-    <div class="level-row"><span class="muted-copy">Support</span>    <strong>$${d.key_levels.support}</strong></div>
-    <div class="level-row"><span class="muted-copy">Resistance</span> <strong>$${d.key_levels.resistance}</strong></div>
-    <div class="level-row"><span class="muted-copy">VWAP</span>       <strong>$${d.key_levels.vwap}</strong></div>`;
+    <div class="level-row"><span class="muted-copy">Support</span>    <strong>$${esc(d.key_levels.support)}</strong></div>
+    <div class="level-row"><span class="muted-copy">Resistance</span> <strong>$${esc(d.key_levels.resistance)}</strong></div>
+    <div class="level-row"><span class="muted-copy">VWAP</span>       <strong>$${esc(d.key_levels.vwap)}</strong></div>`;
 
   // Reasoning & risks
   document.getElementById("analysis-reasoning").textContent = d.reasoning;
@@ -329,13 +330,13 @@ function renderAnalysis(d) {
   const dirClass = rec.direction === "long" ? "long" : rec.direction === "short" ? "short" : "wait";
   const confPct  = Math.round(rec.confidence * 100);
   document.getElementById("analysis-rec").innerHTML = `
-    <div class="rec-direction ${dirClass}">${rec.direction.toUpperCase()}</div>
-    <p class="rec-setup">${rec.setup}</p>
+    <div class="rec-direction ${dirClass}">${esc(rec.direction.toUpperCase())}</div>
+    <p class="rec-setup">${esc(rec.setup)}</p>
     <div class="rec-grid">
-      <div class="rec-item"><span class="muted-copy">Entry</span><strong>${rec.entry_zone}</strong></div>
-      <div class="rec-item"><span class="muted-copy">Stop</span><strong class="negative">${rec.stop_loss}</strong></div>
-      <div class="rec-item"><span class="muted-copy">Target</span><strong class="positive">${rec.target}</strong></div>
-      <div class="rec-item"><span class="muted-copy">R:R</span><strong>${rec.risk_reward}</strong></div>
+      <div class="rec-item"><span class="muted-copy">Entry</span><strong>${esc(rec.entry_zone)}</strong></div>
+      <div class="rec-item"><span class="muted-copy">Stop</span><strong class="negative">${esc(rec.stop_loss)}</strong></div>
+      <div class="rec-item"><span class="muted-copy">Target</span><strong class="positive">${esc(rec.target)}</strong></div>
+      <div class="rec-item"><span class="muted-copy">R:R</span><strong>${esc(rec.risk_reward)}</strong></div>
     </div>
     <div class="conf-row">
       <span class="muted-copy">Confidence</span>
@@ -589,11 +590,11 @@ async function loadAccount() {
     const plSign  = acct.unrealized_pl >= 0 ? "+" : "";
     accountSummary.innerHTML = `
       <div class="acct-grid">
-        <div class="acct-item"><span class="muted-copy">Cash</span><strong>$${acct.cash.toLocaleString(undefined, {minimumFractionDigits:2})}</strong></div>
-        <div class="acct-item"><span class="muted-copy">Portfolio Value</span><strong>$${acct.portfolio_value.toLocaleString(undefined, {minimumFractionDigits:2})}</strong></div>
-        <div class="acct-item"><span class="muted-copy">Buying Power</span><strong>$${acct.buying_power.toLocaleString(undefined, {minimumFractionDigits:2})}</strong></div>
+        <div class="acct-item"><span class="muted-copy">Cash</span><strong>$${esc(acct.cash.toLocaleString(undefined, {minimumFractionDigits:2}))}</strong></div>
+        <div class="acct-item"><span class="muted-copy">Portfolio Value</span><strong>$${esc(acct.portfolio_value.toLocaleString(undefined, {minimumFractionDigits:2}))}</strong></div>
+        <div class="acct-item"><span class="muted-copy">Buying Power</span><strong>$${esc(acct.buying_power.toLocaleString(undefined, {minimumFractionDigits:2}))}</strong></div>
         <div class="acct-item"><span class="muted-copy">Unrealized P&L</span><strong class="${plClass}">${plSign}$${acct.unrealized_pl.toFixed(2)}</strong></div>
-        <div class="acct-item"><span class="muted-copy">Day Trades Used</span><strong>${acct.daytrade_count} / 3</strong></div>
+        <div class="acct-item"><span class="muted-copy">Day Trades Used</span><strong>${esc(acct.daytrade_count)} / 3</strong></div>
       </div>`;
   } catch {
     accountSummary.innerHTML = `<p class="muted-copy">Could not load account.</p>`;
@@ -614,11 +615,11 @@ async function loadAccount() {
           const plS   = p.unrealized_pl >= 0 ? "+" : "";
           return `
             <div class="position-row">
-              <strong>${p.symbol}</strong>
-              <span>${p.qty} shares @ $${p.avg_entry_price.toFixed(2)}</span>
+              <strong>${esc(p.symbol)}</strong>
+              <span>${esc(p.qty)} shares @ $${p.avg_entry_price.toFixed(2)}</span>
               <span>Now $${p.current_price.toFixed(2)}</span>
               <span class="${plCls}">${plS}$${p.unrealized_pl.toFixed(2)} (${plS}${(p.unrealized_plpc * 100).toFixed(2)}%)</span>
-              <button class="ghost-button close-pos-btn" data-symbol="${p.symbol}" type="button">Close</button>
+              <button class="ghost-button close-pos-btn" data-symbol="${esc(p.symbol)}" type="button">Close</button>
             </div>`;
         }).join("")}`;
     }
@@ -640,12 +641,12 @@ async function loadAccount() {
           const statusCls = o.status === "filled" ? "positive" : o.status === "canceled" ? "negative" : "muted-copy";
           return `
             <div class="order-row">
-              <span class="order-side ${o.side}">${o.side.toUpperCase()}</span>
-              <strong>${o.symbol}</strong>
-              <span>${o.qty} shares</span>
-              <span>${o.type}</span>
-              <span class="${statusCls}">${o.status}</span>
-              ${o.filled_avg_price ? `<span>@ $${o.filled_avg_price}</span>` : ""}
+              <span class="order-side ${esc(o.side)}">${esc(o.side.toUpperCase())}</span>
+              <strong>${esc(o.symbol)}</strong>
+              <span>${esc(o.qty)} shares</span>
+              <span>${esc(o.type)}</span>
+              <span class="${statusCls}">${esc(o.status)}</span>
+              ${o.filled_avg_price ? `<span>@ $${esc(o.filled_avg_price)}</span>` : ""}
             </div>`;
         }).join("")}`;
     }

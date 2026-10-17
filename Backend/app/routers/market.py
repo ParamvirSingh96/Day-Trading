@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..alpaca import AlpacaBarsRequest, AlpacaMarketDataClient, convert_alpaca_bars
 from ..analyzer import analyze_chart, get_required_sector_etfs
-from ..deps import require_current_user
+from ..deps import require_operator
 from ..ict import compute_ict_features
 # Lessons/study imports removed 2026-04-24 — see analyze_chart docstring.
 from ..schemas import (
@@ -162,7 +162,7 @@ def _pulse_cache_put(symbols: list[str], resp: "MarketPulseResponse") -> None:
 
 @router.get("/pulse", response_model=MarketPulseResponse)
 async def get_market_pulse(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> MarketPulseResponse:
     """Return a live price snapshot for every symbol in the training universe.
 
@@ -370,7 +370,7 @@ def _chart_cache_put(symbol: str, timeframe: str, resp: "ChartResponse") -> None
 def get_chart(
     symbol: str,
     timeframe: str = "1Min",
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> ChartResponse:
     """Return OHLCV bars for a single symbol.
 
@@ -471,7 +471,7 @@ def get_chart(
 def get_ict_zones(
     symbol: str,
     timeframe: str = "1Min",
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> ICTZonesResponse:
     """Return chart bars + full ICT zone geometry for overlay rendering.
 
@@ -650,7 +650,7 @@ def get_ict_zones(
 @router.get("/analyze/{symbol}", response_model=AnalysisResponse)
 def get_analysis(
     symbol: str,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> AnalysisResponse:
     """Fetch intraday bars, compute technical indicators, and return an AI trade analysis.
 
@@ -782,7 +782,7 @@ def get_analysis(
 
 @router.get("/scan-strategies")
 def scan_strategies(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ):
     """Scan all training-universe symbols for strategy matches (Tier 1 — no AI).
 
@@ -945,7 +945,7 @@ from datetime import date as _date
 @router.post("/morning-universe/build")
 async def build_morning_universe_route(
     body: BuildMorningUniverseRequest,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, _Any]:
     """Run the morning-universe screener server-side. Returns when done.
 
@@ -1060,7 +1060,7 @@ async def build_morning_universe_route(
 
 @router.get("/morning-universe")
 def get_morning_universe(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, _Any]:
     """Return today's morning-universe snapshot + apply state.
 
@@ -1112,7 +1112,7 @@ def get_morning_universe(
 @router.post("/morning-universe/apply")
 def apply_morning_universe_route(
     body: ApplyMorningUniverseRequest,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, _Any]:
     """Apply today's morning universe to the autotrade loop.
 
@@ -1217,7 +1217,7 @@ _setup_watch_cache: dict[str, _Any] = {"ts": 0.0, "payload": None}
 
 @router.get("/setup-watch")
 async def get_setup_watch(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, _Any]:
     """Per-symbol structural diagnostics for the active trading universe.
 
@@ -1406,7 +1406,7 @@ async def get_setup_watch(
 
 @router.get("/scheduler/morning-build")
 def get_morning_build_scheduler_status(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, _Any]:
     """Return the in-process scheduler's current state.
 
@@ -1430,7 +1430,7 @@ def get_morning_build_scheduler_status(
 
 @router.post("/scheduler/morning-build/fire-now")
 async def fire_morning_build_now(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, _Any]:
     """Manually trigger an immediate morning-universe build.
     Bypasses the 08:30 ET time gate. Used for smoke testing.

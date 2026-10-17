@@ -14,10 +14,12 @@ import threading
 import time
 from typing import Any
 
+import math
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..alpaca import AlpacaTradingClient, OrderSide, OrderType, TimeInForce, get_shared_trading_client
 from ..analyzer import analysis_cache
@@ -40,10 +42,15 @@ from ..autotrade import (
     get_active_universe,
     set_trading_universe,
 )
-from ..deps import require_current_user
+from ..deps import require_operator
 from ..settings import settings
 from .. import trading_mode
-from ..trading_mode import mode_snapshot, set_mode, is_configured as _mode_is_configured
+from ..trading_mode import (
+    PaperBoundaryViolation,
+    mode_snapshot,
+    set_mode,
+    is_configured as _mode_is_configured,
+)
 
 logger = logging.getLogger("tradehack.trading")
 router = APIRouter(prefix="/trading", tags=["trading"])
@@ -51,8 +58,40 @@ router = APIRouter(prefix="/trading", tags=["trading"])
 
 # ── Request / response models ────────────────────────────────────────────────
 
+_SYMBOL_PATTERN = "^[A-Z]{1,10}$"
+
+
+def _positive_finite(v: float | None, name: str) -> float | None:
+    if v is None:
+        return None
+    if not math.isfinite(v) or v <= 0:
+        raise ValueError(f"{name} must be a positive finite number")
+    return float(v)
+
+
+def _check_bracket_legs(side: str, take_profit: float | None, stop_loss: float | None,
+                        reference: float | None) -> None:
+    """Bracket legs must come together and sit on the correct side of the
+    entry: for a buy the take-profit is above and the stop below (and vice
+    versa for a sell). ``reference`` is the limit/entry price when known."""
+    if (take_profit is None) != (stop_loss is None):
+        raise ValueError("take_profit_price and stop_loss_price must be provided together")
+    if take_profit is None:
+        return
+    if side == "buy":
+        if not take_profit > stop_loss:
+            raise ValueError("for a buy, take_profit_price must be above stop_loss_price")
+        if reference is not None and not (stop_loss < reference < take_profit):
+            raise ValueError("for a buy, the entry price must sit between stop_loss_price and take_profit_price")
+    else:
+        if not take_profit < stop_loss:
+            raise ValueError("for a sell, take_profit_price must be below stop_loss_price")
+        if reference is not None and not (take_profit < reference < stop_loss):
+            raise ValueError("for a sell, the entry price must sit between take_profit_price and stop_loss_price")
+
+
 class PlaceOrderRequest(BaseModel):
-    symbol: str
+    symbol: str = Field(pattern=_SYMBOL_PATTERN)
     qty: int = Field(ge=1, le=10_000)
     side: str = Field(pattern="^(buy|sell)$")
     order_type: str = Field(default="market", pattern="^(market|limit|stop|stop_limit)$")
@@ -63,15 +102,57 @@ class PlaceOrderRequest(BaseModel):
     take_profit_price: float | None = None
     stop_loss_price: float | None = None
 
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _upper_symbol(cls, v: object) -> object:
+        return v.strip().upper() if isinstance(v, str) else v
+
+    @field_validator("limit_price", "stop_price", "take_profit_price", "stop_loss_price")
+    @classmethod
+    def _prices_positive(cls, v: float | None, info) -> float | None:
+        return _positive_finite(v, info.field_name)
+
+    @model_validator(mode="after")
+    def _cross_field(self) -> "PlaceOrderRequest":
+        needs_limit = self.order_type in ("limit", "stop_limit")
+        needs_stop = self.order_type in ("stop", "stop_limit")
+        if needs_limit and self.limit_price is None:
+            raise ValueError(f"{self.order_type} orders require limit_price")
+        if not needs_limit and self.limit_price is not None:
+            raise ValueError(f"{self.order_type} orders must not carry limit_price")
+        if needs_stop and self.stop_price is None:
+            raise ValueError(f"{self.order_type} orders require stop_price")
+        if not needs_stop and self.stop_price is not None:
+            raise ValueError(f"{self.order_type} orders must not carry stop_price")
+        _check_bracket_legs(self.side, self.take_profit_price, self.stop_loss_price,
+                            self.limit_price)
+        return self
+
 
 class QuickTradeRequest(BaseModel):
     """One-click trade from the analysis page — takes the AI recommendation directly."""
-    symbol: str
+    symbol: str = Field(pattern=_SYMBOL_PATTERN)
     side: str = Field(pattern="^(buy|sell)$")
     qty: int = Field(ge=1, le=10_000)
     entry_price: float | None = None       # limit price (None = market order)
     stop_loss_price: float | None = None
     take_profit_price: float | None = None
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _upper_symbol(cls, v: object) -> object:
+        return v.strip().upper() if isinstance(v, str) else v
+
+    @field_validator("entry_price", "stop_loss_price", "take_profit_price")
+    @classmethod
+    def _prices_positive(cls, v: float | None, info) -> float | None:
+        return _positive_finite(v, info.field_name)
+
+    @model_validator(mode="after")
+    def _cross_field(self) -> "QuickTradeRequest":
+        _check_bracket_legs(self.side, self.take_profit_price, self.stop_loss_price,
+                            self.entry_price)
+        return self
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -147,14 +228,16 @@ def _estimate_order_price(
     client: AlpacaTradingClient,
     symbol: str,
     limit_price: float | None,
+    order_type: str = "market",
 ) -> float:
     """Best-effort reference price for notional sizing.
 
-    Prefers an explicit limit_price when provided; otherwise fetches the latest
-    trade from market data. Returns 0 if no price can be determined — callers
-    must treat that as "cannot validate" and reject.
+    Uses the explicit limit price only for order types that actually carry
+    one (limit / stop_limit); market and stop orders are sized off the latest
+    trade. Returns 0 if no price can be determined — callers must treat that
+    as "cannot validate" and reject.
     """
-    if limit_price and limit_price > 0:
+    if order_type in ("limit", "stop_limit") and limit_price and limit_price > 0:
         return float(limit_price)
     try:
         from ..alpaca import AlpacaMarketDataClient
@@ -235,6 +318,7 @@ def _enforce_manual_position_cap(
     side: str,
     qty: int,
     limit_price: float | None,
+    order_type: str = "market",
 ) -> None:
     """Reject the request if it would breach cash or portfolio-fraction caps.
 
@@ -307,7 +391,7 @@ def _enforce_manual_position_cap(
                 ),
             )
 
-    price = _estimate_order_price(client, symbol, limit_price)
+    price = _estimate_order_price(client, symbol, limit_price, order_type)
     if price <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -404,7 +488,7 @@ def _enforce_manual_position_cap(
 
 @router.get("/account")
 def get_account(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return the Alpaca account summary (cash, equity, buying power, P&L)."""
     cached = _cache_get("account")
@@ -543,7 +627,7 @@ def _mode_flip_preflight(target_mode: str) -> list[str]:
 
 @router.get("/mode")
 def get_trading_mode(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return the active trading mode and a flip preflight.
 
@@ -573,7 +657,7 @@ def get_trading_mode(
 @router.post("/mode")
 async def post_trading_mode(
     req: TradingModeRequest,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Flip the active trading mode (paper ↔ live).
 
@@ -590,6 +674,13 @@ async def post_trading_mode(
 
     current = trading_mode.get_mode()
     target  = req.mode
+
+    # Paper-only builds refuse live before any other preflight so the
+    # response is unambiguous (403 paper_boundary, not a 409 config hint).
+    if target == "live" and trading_mode.paper_only_enabled():
+        raise PaperBoundaryViolation(
+            "This build is paper-only (PAPER_ONLY=true): live trading mode is not available."
+        )
 
     reasons = _mode_flip_preflight(target)
     # Autotrade-running is a soft block — the user can force_stop.
@@ -661,26 +752,26 @@ async def post_trading_mode(
 @router.post("/orders")
 def place_order(
     req: PlaceOrderRequest,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Submit a new order to Alpaca (paper or live depending on config)."""
     client = _get_client()
-    _enforce_manual_position_cap(client, req.symbol, req.side, req.qty, req.limit_price)
-    try:
-        order = client.submit_order(
-            symbol=req.symbol,
-            qty=req.qty,
-            side=OrderSide(req.side),
-            order_type=OrderType(req.order_type),
-            time_in_force=TimeInForce(req.time_in_force),
-            limit_price=req.limit_price,
-            stop_price=req.stop_price,
-            take_profit=req.take_profit_price,
-            stop_loss=req.stop_loss_price,
-        )
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.json() if exc.response.headers.get("content-type", "").startswith("application/json") else str(exc)
-        raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
+    _enforce_manual_position_cap(client, req.symbol, req.side, req.qty, req.limit_price,
+                                 req.order_type)
+    # Broker-boundary errors (InvalidOrderRequest / OrderRejected /
+    # BrokerUnavailable / UncertainOutcome / PaperBoundaryViolation) are
+    # translated to structured responses by the app-level handlers in main.py.
+    order = client.submit_order(
+        symbol=req.symbol,
+        qty=req.qty,
+        side=OrderSide(req.side),
+        order_type=OrderType(req.order_type),
+        time_in_force=TimeInForce(req.time_in_force),
+        limit_price=req.limit_price,
+        stop_price=req.stop_price,
+        take_profit=req.take_profit_price,
+        stop_loss=req.stop_loss_price,
+    )
     _cache_invalidate("account", "positions")
     return _format_order(order)
 
@@ -688,7 +779,7 @@ def place_order(
 @router.post("/quick-trade")
 def quick_trade(
     req: QuickTradeRequest,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """One-click trade from the AI analysis page.
 
@@ -696,22 +787,19 @@ def quick_trade(
     If stop_loss_price and/or take_profit_price are set → bracket order.
     """
     client = _get_client()
-    _enforce_manual_position_cap(client, req.symbol, req.side, req.qty, req.entry_price)
     otype = OrderType.LIMIT if req.entry_price else OrderType.MARKET
-    try:
-        order = client.submit_order(
-            symbol=req.symbol,
-            qty=req.qty,
-            side=OrderSide(req.side),
-            order_type=otype,
-            time_in_force=TimeInForce.DAY,
-            limit_price=req.entry_price,
-            take_profit=req.take_profit_price,
-            stop_loss=req.stop_loss_price,
-        )
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.json() if exc.response.headers.get("content-type", "").startswith("application/json") else str(exc)
-        raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
+    _enforce_manual_position_cap(client, req.symbol, req.side, req.qty, req.entry_price,
+                                 otype.value)
+    order = client.submit_order(
+        symbol=req.symbol,
+        qty=req.qty,
+        side=OrderSide(req.side),
+        order_type=otype,
+        time_in_force=TimeInForce.DAY,
+        limit_price=req.entry_price,
+        take_profit=req.take_profit_price,
+        stop_loss=req.stop_loss_price,
+    )
     _cache_invalidate("account", "positions")
     return _format_order(order)
 
@@ -719,7 +807,7 @@ def quick_trade(
 @router.get("/orders")
 def list_orders(
     order_status: str = "open",
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> list[dict[str, Any]]:
     """List recent orders (open, closed, or all)."""
     client = _get_client()
@@ -729,7 +817,7 @@ def list_orders(
 @router.get("/orders/{order_id}")
 def get_order(
     order_id: str,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     client = _get_client()
     return _format_order(client.get_order(order_id))
@@ -738,7 +826,7 @@ def get_order(
 @router.delete("/orders/{order_id}")
 def cancel_order(
     order_id: str,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, str]:
     client = _get_client()
     client.cancel_order(order_id)
@@ -748,7 +836,7 @@ def cancel_order(
 
 @router.delete("/orders")
 def cancel_all_orders(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, str]:
     client = _get_client()
     client.cancel_all_orders()
@@ -760,7 +848,7 @@ def cancel_all_orders(
 
 @router.get("/positions")
 def list_positions(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> list[dict[str, Any]]:
     """Return all open positions with P&L, enriched with AI trade context."""
     cached = _cache_get("positions")
@@ -808,7 +896,7 @@ def list_positions(
 @router.get("/positions/{symbol}")
 def get_position(
     symbol: str,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     client = _get_client()
     pos = client.get_position(symbol)
@@ -820,7 +908,7 @@ def get_position(
 @router.delete("/positions/{symbol}")
 def close_position(
     symbol: str,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Close a position. Uses market order during hours, extended-hours limit order otherwise."""
     from ..alpaca import AlpacaMarketDataClient, OrderSide, OrderType, TimeInForce
@@ -925,7 +1013,7 @@ def close_position(
 
 @router.delete("/positions")
 def close_all_positions(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, str]:
     client = _get_client()
     client.close_all_positions()
@@ -961,7 +1049,7 @@ class AutoTradeConfigRequest(BaseModel):
 
 @router.get("/autotrade/status")
 def autotrade_get_status(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return the current auto-trade state, config, and recent trade log."""
     return autotrade_status()
@@ -970,7 +1058,7 @@ def autotrade_get_status(
 @router.post("/autotrade/start")
 async def autotrade_start_endpoint(
     config: AutoTradeConfigRequest | None = None,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Start the AI auto-trader. Optionally update config before starting."""
     if config:
@@ -1010,7 +1098,7 @@ async def autotrade_start_endpoint(
 
 @router.post("/autotrade/stop")
 async def autotrade_stop_endpoint(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Stop the AI auto-trader."""
     autotrade_stop()
@@ -1024,7 +1112,7 @@ class AutonomousBody(BaseModel):
 @router.post("/autotrade/autonomous")
 async def autotrade_autonomous_endpoint(
     body: AutonomousBody,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Toggle autonomous (auto-approve) mode.
 
@@ -1044,7 +1132,7 @@ class ApproveBody(BaseModel):
 async def autotrade_approve_endpoint(
     approval_id: str,
     body: ApproveBody | None = None,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Approve a pending trade — execute it now. Optionally override qty."""
     qty_override = body.qty if body else None
@@ -1063,7 +1151,7 @@ async def autotrade_approve_endpoint(
 @router.post("/autotrade/reject/{approval_id}")
 def autotrade_reject_endpoint(
     approval_id: str,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Reject a pending trade — do not execute."""
     result = autotrade_reject(approval_id)
@@ -1078,7 +1166,7 @@ def autotrade_reject_endpoint(
 @router.post("/autotrade/close/{symbol}")
 async def autotrade_close_position(
     symbol: str,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Manually close a monitored autotrade position."""
     result = await autotrade_close_monitored(symbol)
@@ -1101,7 +1189,7 @@ class UniverseRequest(BaseModel):
 
 @router.get("/autotrade/universe")
 def get_universe(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return the active trading universe and the .env default.
 
@@ -1156,7 +1244,7 @@ def _purge_study_insights_for_removed_symbols(
 @router.post("/autotrade/universe")
 def update_universe(
     body: UniverseRequest,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Set a custom trading universe (overrides .env default).
 
@@ -1177,7 +1265,7 @@ def update_universe(
 
 @router.delete("/autotrade/universe")
 def reset_universe(
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Reset trading universe to .env default.
 
@@ -1208,7 +1296,7 @@ class CacheConfigRequest(BaseModel):
 
 @router.get("/autotrade/cache")
 def get_cache_stats(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return AI analysis cache statistics."""
     return analysis_cache.stats()
@@ -1216,7 +1304,7 @@ def get_cache_stats(
 
 @router.post("/autotrade/cache/clear")
 def clear_cache(
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Clear the AI analysis cache."""
     analysis_cache.clear()
@@ -1226,7 +1314,7 @@ def clear_cache(
 @router.post("/autotrade/cache/config")
 def update_cache_config(
     config: CacheConfigRequest,
-    _: object = Depends(require_current_user),
+    _: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Update cache settings (TTL, price drift threshold, enable/disable)."""
     if config.enabled is not None:
@@ -1248,7 +1336,7 @@ def get_history(
     setup: str | None = None,
     limit: int = 100,
     offset: int = 0,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return persisted trade history with optional filters."""
     trades = get_trade_history(
@@ -1261,7 +1349,7 @@ def get_history(
 def get_performance(
     days: int = 30,
     symbol: str | None = None,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return aggregate performance stats over a time window."""
     return get_performance_stats(user.id, days=days, symbol=symbol)
@@ -1271,7 +1359,7 @@ def get_performance(
 def export_trades_csv(
     days: int = 365,
     symbol: str | None = None,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ):
     """Export trade history as a downloadable CSV file."""
     trades = get_trade_history(user.id, days=days, symbol=symbol, limit=10_000)
@@ -1377,7 +1465,7 @@ def _format_position(p: dict) -> dict[str, Any]:
 @router.get("/simulator/performance")
 def get_sim_performance(
     days: int = 7,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return hypothetical performance if every AI recommendation had been followed."""
     return get_simulated_performance(user.id, days=days)
@@ -1388,7 +1476,7 @@ def get_sim_trades(
     days: int = 7,
     status: str | None = None,
     limit: int = 100,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return individual simulated trade records."""
     trades = get_simulated_trades(user.id, days=days, status=status, limit=limit)
@@ -1401,7 +1489,7 @@ def get_sim_trades(
 def get_trade_lessons(
     limit: int = 20,
     symbol: str | None = None,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Return recent AI-generated lessons from losing trades."""
     lessons = get_lessons(user.id, limit=limit, symbol=symbol)
@@ -1425,7 +1513,7 @@ def _lesson_to_dict(record: TradeLesson) -> dict[str, Any]:
 @router.post("/lessons/generate/{trade_id}")
 def generate_trade_lesson(
     trade_id: int,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Manually generate an AI lesson for a specific losing trade.
 
@@ -1512,7 +1600,7 @@ def generate_trade_lesson(
 
 @router.post("/study/run")
 def run_study(
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Run the after-hours AI study session across all trading universe symbols.
 
@@ -1525,7 +1613,7 @@ def run_study(
 
 @router.post("/study/run/stream")
 def run_study_stream(
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> StreamingResponse:
     """Streaming variant of /study/run — emits NDJSON progress events.
 
@@ -1581,7 +1669,7 @@ def run_study_stream(
 def get_study_insights_endpoint(
     limit: int = 30,
     study_date: str | None = None,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict[str, Any]:
     """Fetch recent after-hours study insights.
 
@@ -1653,7 +1741,7 @@ class _ReadinessEventRequest(BaseModel):
 @router.post("/readiness/event")
 async def post_readiness_event(
     req: _ReadinessEventRequest,
-    user: object = Depends(require_current_user),
+    user: object = Depends(require_operator),
 ) -> dict:
     """Append a readiness event to today's JSONL audit. Used by the
     frontend to record dismissals + alert acknowledgements."""

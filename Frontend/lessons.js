@@ -69,7 +69,7 @@ function renderLastLosses() {
     const reviewLabel = hasLesson ? "View" : "Review";
     const reviewTitle = hasLesson ? "View the AI lesson for this trade" : "Have the AI review this trade and add a lesson";
     return `
-      <div class="loss-row collapsible-panel" data-trade-id="${t.id}" data-open="false">
+      <div class="loss-row collapsible-panel" data-trade-id="${esc(t.id)}" data-open="false">
         <div class="loss-row-header collapsible-toggle">
           <span class="collapsible-chevron">▾</span>
           <span class="loss-time">${when}</span>
@@ -78,10 +78,10 @@ function renderLastLosses() {
           <span class="loss-setup">${t.setup ? esc(t.setup) : "—"}</span>
           <span class="loss-pnl negative">${pnlStr}</span>
           <span class="loss-r negative">${rStr}</span>
-          <button class="perf-trade-review${hasLesson ? " reviewed" : ""}" data-trade-id="${t.id}" title="${reviewTitle}">${reviewLabel}</button>
+          <button class="perf-trade-review${hasLesson ? " reviewed" : ""}" data-trade-id="${esc(t.id)}" title="${reviewTitle}">${reviewLabel}</button>
         </div>
         <div class="collapsible-content">
-          <div class="loss-row-body" id="loss-body-${t.id}">
+          <div class="loss-row-body" id="loss-body-${esc(t.id)}">
             ${hasLesson ? renderLessonBody(lesson) : `<p class="muted-copy">No lesson generated yet — click <strong>Review</strong> to have the AI analyze this trade.</p>`}
           </div>
         </div>
@@ -103,7 +103,7 @@ function renderLessonBody(lesson) {
   return `
     <div class="lesson-body-wrap">
       <div class="lesson-body-meta muted-copy">Reviewed ${when}</div>
-      <div class="lesson-card-body">${escapeLessonText(lesson.lesson || "")}</div>
+      <div class="lesson-card-body">${esc(lesson.lesson || "")}</div>
       ${tagChips ? `<div class="lesson-card-tags">${tagChips}</div>` : ""}
     </div>`;
 }
@@ -185,7 +185,7 @@ function renderLessonsByStock() {
                 <span>${w}</span>
                 <span class="lesson-pnl negative">${pnlStr}</span>
               </div>
-              <div class="lesson-card-body">${escapeLessonText(l.lesson || "")}</div>
+              <div class="lesson-card-body">${esc(l.lesson || "")}</div>
               ${tagChips ? `<div class="lesson-card-tags">${tagChips}</div>` : ""}
             </div>`;
         }).join("");
@@ -217,14 +217,6 @@ function renderLessonsByStock() {
         </div>
       </div>`;
   }).join("");
-}
-
-function escapeLessonText(s) {
-  // Minimal HTML-safe render; lesson text is AI-written plain text
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }
 
 export function initLessons() {

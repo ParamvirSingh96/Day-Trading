@@ -4,15 +4,26 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+import math
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 import logging
 
-from .alpaca import AlpacaTradeStream
-from .db import Base, engine
+from .alpaca import (
+    AlpacaTradeStream,
+    BrokerUnavailable,
+    InvalidOrderRequest,
+    OrderRejected,
+    PaperBoundaryViolation,
+    UncertainOutcome,
+)
+from .db import Base, SessionLocal, engine
 from .limiter import limiter
 from .logging_config import configure_logging
 from .routers import auth, market, trading
@@ -79,6 +90,9 @@ def _migrate_sqlite_columns() -> None:
         ("trade_records", "entry_fill_price", "FLOAT"),
         ("trade_records", "exit_fill_price",  "FLOAT"),
         ("trade_records", "exit_order_id",    "VARCHAR(64)"),
+        # 2026-10 hardening — operator boundary. Existing single-account
+        # databases are promoted by ``auth.ensure_operator_bootstrap``.
+        ("users", "is_operator", "BOOLEAN NOT NULL DEFAULT 0"),
     ]
     # Indexes that `create_all` won't backfill on an existing DB.
     index_migrations = [
@@ -147,7 +161,15 @@ def _on_alpaca_trade_update(data: dict) -> None:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     Base.metadata.create_all(bind=engine)
     _migrate_sqlite_columns()
-    logger.info("startup env=%s database=%s", settings.app_env, settings.database_url.split("://")[0])
+    logger.info("startup env=%s database=%s paper_only=%s demo=%s registration=%s",
+                settings.app_env, settings.database_url.split("://")[0],
+                settings.paper_only, settings.demo_mode, settings.registration_mode)
+    try:
+        from .auth import ensure_operator_bootstrap
+        with SessionLocal() as db:
+            ensure_operator_bootstrap(db)
+    except Exception as exc:
+        logger.warning("operator_bootstrap_failed err=%s", exc)
 
     # v7.13 Phase 1.6 — restore today's applied morning universe if
     # one exists on disk. Conservative default (do nothing → fall
@@ -177,9 +199,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.warning("applied_universe_restore_skipped err=%s", exc)
 
     # Start Alpaca trade-updates WebSocket stream — pushes fills to frontend
-    # instead of relying on 1-second polling.
+    # instead of relying on 1-second polling. Skipped in DEMO_MODE (there is
+    # no broker to stream from; the fake broker fills synchronously).
     stream = AlpacaTradeStream(on_trade_update=_on_alpaca_trade_update)
-    stream_task = asyncio.create_task(stream.run_forever(), name="alpaca_trade_stream")
+    if settings.demo_mode:
+        stream_task = asyncio.create_task(asyncio.sleep(0), name="alpaca_trade_stream_disabled")
+    else:
+        stream_task = asyncio.create_task(stream.run_forever(), name="alpaca_trade_stream")
 
     # v7.15.3 (2026-05-06): in-process daily scheduler. Replaces the
     # macOS launchd auto-build that was blocked by TCC sandboxing on
@@ -230,6 +256,70 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ── Broker-boundary error translation ────────────────────────────────────────
+# Typed failures from app/alpaca.py become structured responses instead of
+# generic 500s. None of these trigger a retry of the original request.
+
+def _error_payload(error: str, message: str, **extra: object) -> dict:
+    return {"error": error, "message": message, **extra}
+
+
+def _json_safe(value):
+    """Make a validation-error payload JSON-serializable: the default handler
+    echoes the offending input, and a non-finite float (``Infinity``/``NaN``
+    tokens are accepted by Python's JSON parser) would otherwise crash the
+    response encoder into a 500."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (str, int, bool)) or value is None:
+        return value
+    return str(value)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"detail": _json_safe(exc.errors())})
+
+
+@app.exception_handler(PaperBoundaryViolation)
+async def _paper_boundary_handler(_: Request, exc: PaperBoundaryViolation) -> JSONResponse:
+    logger.error("paper_boundary_violation detail=%s", exc)
+    return JSONResponse(status_code=403, content=_error_payload("paper_boundary", str(exc)))
+
+
+@app.exception_handler(InvalidOrderRequest)
+async def _invalid_order_handler(_: Request, exc: InvalidOrderRequest) -> JSONResponse:
+    return JSONResponse(status_code=400, content=_error_payload("invalid_order", str(exc)))
+
+
+@app.exception_handler(OrderRejected)
+async def _order_rejected_handler(_: Request, exc: OrderRejected) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content=_error_payload("order_rejected", exc.message, broker_status=exc.status_code),
+    )
+
+
+@app.exception_handler(BrokerUnavailable)
+async def _broker_unavailable_handler(_: Request, exc: BrokerUnavailable) -> JSONResponse:
+    return JSONResponse(status_code=503, content=_error_payload("broker_unavailable", str(exc)))
+
+
+@app.exception_handler(UncertainOutcome)
+async def _uncertain_outcome_handler(_: Request, exc: UncertainOutcome) -> JSONResponse:
+    return JSONResponse(
+        status_code=502,
+        content=_error_payload(
+            "uncertain_outcome", str(exc),
+            action="Check open orders/positions before resubmitting; the request was not retried.",
+        ),
+    )
 
 app.add_middleware(
     CORSMiddleware,

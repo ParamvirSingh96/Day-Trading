@@ -3,6 +3,17 @@
 How the system is run day to day, what to check, and how to stop it. Everything
 here assumes the paper-only configuration in `Backend/.env.example`.
 
+## The operator account
+
+The first account registered on an empty database is the **operator** — the
+only kind of account that can see the broker account, place or close trades,
+start the autotrader, or subscribe to the live feed. Registration closes
+after that (`REGISTRATION_MODE=closed`); add emails to `OPERATOR_EMAILS` to
+grant another person operator access, and set `SCHEDULER_USER_EMAIL` to the
+operator the unattended scheduler should trade under. The build is paper-only
+(`PAPER_ONLY=true`): the mode switch to live is refused at the API and the
+broker client refuses any non-paper destination.
+
 ## Two ways to operate
 
 **Automated (default on a hosted box).** With the backend running continuously
